@@ -74,6 +74,11 @@ if(BUILD_TESTING)
                              "${PROJECT_SOURCE_DIR}/testScripts/cli_contract_test.sh"
                              $<TARGET_FILE:hopfieldann>
                      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+            add_test(NAME ExperimentContract
+                     COMMAND "${BASH_EXECUTABLE}"
+                             "${PROJECT_SOURCE_DIR}/testScripts/experiment_contract_test.sh"
+                             $<TARGET_FILE:hopfieldann>
+                     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
         else()
             message(WARNING "Bash not found; CliContract test is disabled")
         endif()

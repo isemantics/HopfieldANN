@@ -488,3 +488,14 @@ Note: the Google Test suite has grown since; the convergence engine now terminat
 a full asynchronous sweep produces no neuron flips, guaranteeing convergence to a true fixed
 point. Since the 1.12.1 refactor all pattern and weight storage is dynamically sized from the
 input file header, removing the previous hard-coded limits.
+
+### Reproducible runs
+
+`--seed` accepts decimal integers from 0 through `UINT_MAX` (normally
+4294967295). Signs, overflow and trailing text are rejected, including in
+`.hopfieldrc`. CLI seeds override config seeds; otherwise the current time
+provides the seed. The effective seed is printed unless `--quiet` is used.
+Repeat the same command, inputs and seed on the same build/C runtime to
+reproduce stochastic training, noise and recall. Random sequences are not
+portable across different C runtimes. Reload and repeat continue the session's
+random sequence rather than resetting it.

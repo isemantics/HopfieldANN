@@ -67,6 +67,19 @@ typedef struct {
    char *outputFile;
 } ConfigFileSettings;
 
+static bool parse_seed(const char *text, unsigned int *seed)
+{
+   if (*text < '0' || *text > '9')
+      return false;
+   errno = 0;
+   char *end;
+   unsigned long value = strtoul(text, &end, 10);
+   if (errno == ERANGE || *end != '\0' || value > UINT_MAX)
+      return false;
+   *seed = (unsigned int)value;
+   return true;
+}
+
 static bool usage(int argc);
 static void clearInput(void);
 static void handle_error(HopfieldError err);
@@ -130,7 +143,8 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       if (cfg.helpRequested) {
          print_usage();
       }
-      return cfg.helpRequested ? 0 : 1;
+      free_batch_config(&cfg);
+      return 1;
    }
 
    if (cfg.helpRequested) {
@@ -141,16 +155,21 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
 
    /* Load config file (CLI overrides config) */
    ConfigFileSettings config = {0};
-   read_config_file(&config);
+   if (!read_config_file(&config)) {
+      free(config.saveWeightsFile);
+      free(config.loadWeightsFile);
+      free(config.outputFile);
+      free_batch_config(&cfg);
+      return 1;
+   }
    apply_config_to_batch(&config, &cfg);
 
-   /* Apply seed: CLI > config > time() */
-   if (cfg.seedSet || config.seedSet) {
-      srand(cfg.seedSet ? cfg.seed : config.seed);
-   }
-   else {
-      srand((unsigned int)time(NULL));
-   }
+   /* Seed once for the complete session, including stochastic training. */
+   if (!cfg.seedSet)
+      cfg.seed = (unsigned int)time(NULL);
+   srand(cfg.seed);
+   if (!cfg.quiet)
+      printf("- Random seed: %u\n", cfg.seed);
 
    /* Validate positional arguments */
    if (argc - optind < 1 || argc - optind > 2) {
@@ -773,14 +792,10 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
             break;
          }
          case 's': {
-            char *endptr;
-            unsigned long val = strtoul(optarg, &endptr, 10);
-            if (endptr == optarg || *endptr != '\0' || val > UINT_MAX) {
-               fprintf(stderr, "\n\tERROR: invalid seed value '%s'\n\n",
-                       optarg);
+            if (!parse_seed(optarg, &cfg->seed)) {
+               fprintf(stderr, "Error: invalid seed value '%s'\n", optarg);
                return false;
             }
-            cfg->seed = (unsigned int)val;
             cfg->seedSet = true;
             break;
          }
@@ -901,12 +916,13 @@ static bool read_config_file(ConfigFileSettings *settings)
             settings->ruleSet = true;
          }
          else if (strcasecmp(key, "seed") == 0) {
-            char *endptr;
-            unsigned long v = strtoul(val, &endptr, 10);
-            if (endptr != val && *endptr == '\0') {
-               settings->seed = (unsigned int)v;
-               settings->seedSet = true;
+            if (!parse_seed(val, &settings->seed)) {
+               fprintf(stderr, "Error: invalid config seed '%s'\n", val);
+               fclose(f);
+               free(homePath);
+               return false;
             }
+            settings->seedSet = true;
          }
          else if (strcasecmp(key, "noise") == 0) {
             char *endptr;

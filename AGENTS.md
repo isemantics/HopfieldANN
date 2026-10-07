@@ -91,8 +91,9 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
 
 ## CLI behavior
 
-- Startup `srand(time(NULL))` is called exactly once — recall uses randomized
-  (asynchronous) updates, so output is non-deterministic.
+- Startup seeds `srand` exactly once: `--seed` > config `seed` > time.
+  The effective seed is printed unless quiet. Same seed and inputs reproduce
+  a run on the same build/C runtime, including Daydreaming training.
 - Learning-rule prompt `(H)ebbian, (S)torkey, (P)seudo-inverse, (D)aydreaming or
   (M)odern? [H]` — blank/EOF selects Hebbian.
 - **Mode 1** (`argc == 2`): prompts for pattern index `1..nPatterns` then noise
