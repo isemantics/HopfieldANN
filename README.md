@@ -398,6 +398,7 @@ A warning is shown if the number of stored patterns exceeds the theoretical capa
 | `-p, --pattern LIST` | Pattern indices 1..N, comma-separated (e.g., `1,3,5`). In mode 2, uses noisy pattern indices. |
 | `-n, --noise PERCENT` | Noise level 0–100 (mode 1 only) |
 | `-s, --seed VALUE` | Random seed for reproducible runs |
+| `--compare` | Compare all five rules; defaults to all patterns if `--pattern` is omitted |
 | `-c, --csv FILE` | Write one CSV metrics row per batch simulation (overwrites FILE) |
 | `-q, --quiet` | Suppress non-error output; only exit code indicates result |
 | `-v, --verbose` | Show energy per iteration during convergence |
@@ -514,7 +515,7 @@ It can be combined with `--output` using separate destination files.
 
 Columns: `rule`, `seed`, `pattern` (1-based), `reference`, `noise_percent`,
 `neurons`, `iterations`, `converged`, `overlap`, `hamming`, `energy`,
-`training_seconds`, `recall_seconds`. Rule names match the CLI values;
+`training_seconds`, `recall_seconds`, `status`. Rule names match the CLI values;
 loaded weights use `loaded` because the binary format does not retain the
 original learning rule. Training time is zero when weights are loaded.
 Times measure process CPU seconds, may round to zero for tiny experiments,
@@ -534,3 +535,39 @@ different learning rules are not directly comparable.
 Write/open/learning failures return exit code 1. A failed run may leave a
 partial CSV; only consume it as complete when the process succeeds (or
 returns 2 for completed recalls that did not all converge).
+
+### Comparing learning rules
+
+```bash
+# All stored patterns, same corrupted inputs for each rule
+./bin/hopfieldann data/hopf01.dat --compare --noise 20 --seed 42 \
+  --csv comparison.csv
+
+# A selected subset, with the shared input grids visible
+./bin/hopfieldann data/hopf01.dat --compare --pattern 1,3,5 \
+  --noise 20 --seed 42 --verbose
+```
+
+`--compare` runs Hebbian, Storkey, pseudo-inverse, Daydreaming and Modern
+Hopfield in that order. Inputs are corrupted **once before training** and
+reused unchanged by every rule. Every selected occurrence is a trial;
+repeated indices receive separate corruptions. Omit `--pattern` to compare
+all patterns. A second input file compares all (or selected) noisy patterns
+without a noise argument; the noisy-reference metric limitation above applies.
+
+Each rule's console summary reports mean overlap, mean Hamming distance,
+exact matches, converged recalls, mean iterations, training CPU seconds and
+total recall CPU seconds. `--quiet` suppresses summaries but preserves CSV
+output and errors. CSV rows are ordered by rule, then selection; `status=ok`
+means recall ran (check `converged` separately). Failed rules get an additional
+`status=failed` row with only rule and seed populated. Other rules still run,
+and any such failure makes the command exit with code 1. For example,
+linearly dependent memories cannot be learned by the pseudo-inverse rule.
+
+The seed reproduces the **whole comparison**, excluding timings. Random
+training and recall consume a shared random sequence; update orders are not
+paired across rules, and results need not match separate single-rule commands
+with that seed. Use several seeds for a broader evaluation. For useful timing
+comparisons, omit `--verbose`. `--compare` cannot be combined with `--rule`,
+weight load/save or pattern output. A configured rule is ignored; configured
+weight/pattern output options are rejected as incompatible.

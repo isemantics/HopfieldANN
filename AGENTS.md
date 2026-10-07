@@ -200,3 +200,10 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
   2 non-convergence, 3 invalid pattern index.
 - `ExperimentContract` checks seed reproducibility and CSV contracts in
   an isolated temporary directory, in addition to the two original tests.
+
+- `--compare [--pattern LIST] --noise PERCENT` compares all five rules;
+  absent selections mean all patterns. Mode 2 uses the noisy file instead.
+  Precompute noise once before any learning, keep every selected input
+  unchanged across rules, and seed only once per command. CSV `status`
+  distinguishes completed recalls from failed rules; continue other rules
+  after a learning failure and return exit code 1.

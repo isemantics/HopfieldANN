@@ -34,10 +34,10 @@ for rule in hebbian storkey pseudo-inverse daydreaming modern; do
     "$BIN" "$ROOT/data/hopf01.dat" --rule "$rule" --pattern 1,2 --noise 0 --seed 42 --quiet --verbose --csv first.csv > out
     test ! -s out
     awk -F, -v rule="$rule" '
-        NR == 1 { if ($1 != "rule" || NF != 13) exit 1; next }
-        NF != 13 || $1 != rule || $2 != 42 || $3 != NR-1 ||
+        NR == 1 { if ($1 != "rule" || NF != 14) exit 1; next }
+        NF != 14 || $1 != rule || $2 != 42 || $3 != NR-1 ||
         $4 != "stored" || $5 != 0 || $6 != 100 || $7 < 1 ||
-        $8 != "yes" || $9 < -1 || $9 > 1 || $10 < 0 || $10 > $6 ||
+        $14 != "ok" || $8 != "yes" || $9 < -1 || $9 > 1 || $10 < 0 || $10 > $6 ||
         ($9 - (1 - 2*$10/$6))^2 > 1e-20 || $12 < 0 || $13 < 0 { exit 1 }
         END { if (NR != 3) exit 1 }
     ' first.csv
@@ -64,4 +64,70 @@ expect_failure dependent.dat --rule pseudo-inverse --pattern 1 --noise 0 --csv f
 if test -e /dev/full; then
     expect_failure "$ROOT/data/hopf01.dat" --pattern 1 --noise 0 --csv /dev/full
 fi
+# Every rule receives bit-for-bit identical inputs, even after Daydreaming.
+"$BIN" "$ROOT/data/hopf01.dat" --compare --pattern 2,1 --noise 20 --seed 42 --verbose --csv compare.csv > compare.out
+awk '
+    /^Comparison input:/ {
+        split($3, rule, "="); split($4, pattern, "=");
+        file = "input." rule[2] "." pattern[2]; remaining = 10; next
+    }
+    remaining > 0 { print > file; remaining-- }
+' compare.out
+for rule in storkey pseudo-inverse daydreaming modern; do
+    cmp "input.hebbian.1" "input.$rule.1"
+    cmp "input.hebbian.2" "input.$rule.2"
+done
+awk -F, '
+    BEGIN { split("hebbian storkey pseudo-inverse daydreaming modern", rules, " ") }
+    NR == 1 { next }
+    NF != 14 || $1 != rules[int((NR-2)/2)+1] || $2 != 42 ||
+    $3 != (NR%2 == 0 ? 2 : 1) || $4 != "stored" || $5 != 20 ||
+    $7 < 1 || $14 != "ok" { exit 1 }
+    END { if (NR != 11) exit 1 }
+' compare.csv
+test "$(grep -c '^Comparison .*mean_overlap=' compare.out)" -eq 5
+# Summary averages must agree with the exported per-pattern metrics.
+awk '
+    FNR == NR {
+        if (FNR == 1) next;
+        split($0, c, ","); n[c[1]]++; overlap[c[1]] += c[9];
+        hamming[c[1]] += c[10]; iterations[c[1]] += c[7]; next
+    }
+    /^Comparison .*mean_overlap=/ {
+        rule = $2; sub(/:$/, "", rule);
+        split($3, o, "="); split($4, h, "="); split($7, i, "=");
+        if ((o[2]-overlap[rule]/n[rule])^2 > 1e-8 ||
+            (h[2]-hamming[rule]/n[rule])^2 > 1e-8 ||
+            (i[2]-iterations[rule]/n[rule])^2 > 1e-8) exit 1
+    }
+' compare.csv compare.out
+"$BIN" "$ROOT/data/hopf01.dat" --compare --pattern 2,1 --noise 20 --seed 42 --quiet --csv again.csv > out
+test ! -s out
+cut -d, -f1-11,14 compare.csv > first
+cut -d, -f1-11,14 again.csv > second
+cmp first second
+"$BIN" "$ROOT/data/hopf01.dat" --compare --noise 0 --seed 42 --quiet --csv all.csv
+test "$(wc -l < all.csv)" -eq 36
+"$BIN" "$ROOT/data/hopf01.dat" "$ROOT/data/hopf01noisy.dat" --compare --seed 42 --quiet --csv mode2.csv
+awk -F, 'NR > 1 && ($4 != "noisy" || $5 != -1) { exit 1 } END { if (NR != 21) exit 1 }' mode2.csv
+expect_failure dependent.dat --compare --noise 0 --seed 42 --quiet --csv dependent.csv
+awk -F, '
+    $1 == "pseudo-inverse" { if (NF != 14 || $14 != "failed" || $9 != "") exit 1; failed++ }
+    $1 == "modern" && $14 == "ok" { modern++ }
+    END { if (failed != 1 || modern != 2) exit 1 }
+' dependent.csv
+expect_failure "$ROOT/data/hopf01.dat" --compare --noise 0 --rule hebbian
+expect_failure "$ROOT/data/hopf01.dat" --compare --noise 0 --load-weights missing.bin
+expect_failure "$ROOT/data/hopf01.dat" --compare --noise 0 --save-weights weights.bin
+expect_failure "$ROOT/data/hopf01.dat" --compare --noise 0 --output patterns.dat
+expect_failure "$ROOT/data/hopf01.dat" --compare
+if test -e /dev/full; then
+    expect_failure "$ROOT/data/hopf01.dat" --compare --pattern 1 --noise 0 --csv /dev/full
+fi
+for list in ',' '1,' ',1' '1,,2' '0' '-1' '184467440737095516160'; do
+    expect_failure "$ROOT/data/hopf01.dat" --compare --pattern "$list" --noise 0
+done
+# Repeated selections remain separate trials for each rule.
+"$BIN" "$ROOT/data/hopf01.dat" --compare --pattern 1,1 --noise 20 --seed 42 --quiet --csv repeated.csv
+awk -F, 'NR > 1 && ($3 != 1 || $14 != "ok") { exit 1 } END { if (NR != 11) exit 1 }' repeated.csv
 echo 'Experiment contracts passed.'
