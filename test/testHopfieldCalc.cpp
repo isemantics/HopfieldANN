@@ -8,6 +8,7 @@
 
 extern "C" {
 #include "HopfieldCalc.h"
+#include "HopfieldAnalysis.h"
 #include "HopfieldContext.h"
 #include "HopfieldIO.h"
 #include "HopfieldNoise.h"
@@ -1271,4 +1272,29 @@ TEST_F(HopfieldCalcTest, CorruptionRejectsInvalidArguments)
                            output.data()), -1);
    EXPECT_EQ(corruptPattern(ctx, 0, 50, static_cast<HopfieldNoise>(99),
                            output.data()), -1);
+}
+
+TEST_F(HopfieldCalcTest, RecallAnalysisCategoriesAndRanking)
+{
+   allocate(4, 2);
+   double first[] = {1, 1, 1, 1};
+   double second[] = {1, 1, -1, -1};
+   double inverse[] = {-1, -1, -1, -1};
+   double unknown[] = {1, -1, 1, -1};
+   copyPattern(4, first, ctx->patterns[0]);
+   copyPattern(4, second, ctx->patterns[1]);
+   EXPECT_STREQ(analyzeRecall(ctx, first, 0, true).kind, "correct");
+   EXPECT_STREQ(analyzeRecall(ctx, second, 0, true).kind, "other");
+   EXPECT_STREQ(analyzeRecall(ctx, second, -1, true).kind, "stored");
+   auto result = analyzeRecall(ctx, inverse, 0, true);
+   EXPECT_STREQ(result.kind, "inverse");
+   EXPECT_EQ(result.matchedPattern, 1);
+   EXPECT_STREQ(analyzeRecall(ctx, unknown, 0, true).kind, "unknown");
+   EXPECT_STREQ(analyzeRecall(ctx, first, 0, false).kind, "not_converged");
+   result = analyzeRecall(ctx, unknown, 0, true);
+   EXPECT_EQ(result.count, 2);
+   EXPECT_EQ(result.indices[0], 1);
+   EXPECT_EQ(result.indices[1], 2);
+   copyPattern(4, inverse, ctx->patterns[1]);
+   EXPECT_STREQ(analyzeRecall(ctx, inverse, 0, true).kind, "other");
 }

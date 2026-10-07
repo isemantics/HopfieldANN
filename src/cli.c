@@ -1,6 +1,7 @@
 #include "cli.h"
 #include "AppInfo.h"
 #include "HopfieldCalc.h"
+#include "HopfieldAnalysis.h"
 #include "HopfieldContext.h"
 #include "HopfieldIO.h"
 #include "HopfieldNoise.h"
@@ -1182,7 +1183,7 @@ static bool open_csv(BatchConfig *cfg)
    fprintf(cfg->csv,
            "rule,seed,pattern,reference,noise_percent,neurons,"
            "iterations,converged,overlap,hamming,energy,"
-           "training_seconds,recall_seconds,status,trial,corruption,affected_pixels\n");
+           "training_seconds,recall_seconds,status,trial,corruption,affected_pixels,attractor,matched_pattern,closest1,overlap1,closest2,overlap2,closest3,overlap3\n");
    return true;
 }
 
@@ -1359,7 +1360,7 @@ static int run_sweep(HopfieldContext *ctx, BatchConfig *cfg,
          if (status == 1 || status == 3) {
             result = 1;
             if (!cfg->compare && cfg->csv)
-               fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,\n",
+               fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,,,,,,,,,\n",
                        rule_key(cfg->rule), cfg->seed, noise, cfg->trial,
                        noise_key(cfg->corruption));
          }
@@ -1434,7 +1435,7 @@ static int run_comparison(HopfieldContext *ctx, BatchConfig *cfg,
          result = 1;
          fprintf(stderr, "Comparison %s: failed\n", rule_key(rule));
          if (cfg->csv)
-            fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,\n",
+            fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,,,,,,,,,\n",
                     rule_key(rule), cfg->seed, cfg->noise, cfg->trial,
                     mode2 ? "file" : noise_key(cfg->corruption));
          continue;
@@ -1533,6 +1534,9 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
                                 state->outputPattern);
    int hamming = calcHammingDistance(
       ctx->patternSize, state->inputPattern, state->outputPattern);
+   RecallAnalysis analysis = analyzeRecall(ctx, state->outputPattern,
+                                            mode2 ? -1 : patternIndex,
+                                            *converged);
    cfg->totalOverlap += overlap;
    cfg->totalHamming += hamming;
    cfg->totalIterations += cb_data.iterations;
@@ -1542,7 +1546,7 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
    if (cfg->csv) {
       fprintf(cfg->csv,
               "%s,%u,%d,%s,%d,%d,%d,%s,%.17g,%d,%.17g,"
-              "%.9f,%.9f,ok,%d,%s,%d\n",
+              "%.9f,%.9f,ok,%d,%s,%d",
               cfg->loadWeightsFile ? "loaded" : rule_key(cfg->rule),
               cfg->seed, patternIndex + 1, mode2 ? "noisy" : "stored",
               mode2 ? -1 : noisePercent, ctx->patternSize,
@@ -1550,10 +1554,20 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
               overlap, hamming, finalEnergy, cfg->trainingSeconds,
               recallSeconds, cfg->trial,
               mode2 ? "file" : noise_key(cfg->corruption), affected);
+      fprintf(cfg->csv, ",%s,%d", analysis.kind, analysis.matchedPattern);
+      for (int i = 0; i < HOPFIELD_TOP_MATCHES; i++) {
+         if (i < analysis.count)
+            fprintf(cfg->csv, ",%d,%.17g", analysis.indices[i],
+                    analysis.overlaps[i]);
+         else
+            fprintf(cfg->csv, ",,");
+      }
+      fputc('\n', cfg->csv);
    }
    if (!cfg->quiet) {
       print_batch_result(patternIndex + 1, overlap, hamming,
                          ctx->patternSize, *converged);
+      printRecallAnalysis(&analysis);
    }
 
    if (cfg->outputFile) {

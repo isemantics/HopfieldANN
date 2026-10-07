@@ -653,3 +653,15 @@ trial. Edge masks are deterministic at a given percentage; repeated trials
 then vary only stochastic training/recall. `--verbose` shows the input mask; `--corruption` is incompatible with
 a second noisy file or the interactive menu. At 0% nothing is changed;
 at 100% all pixels are flipped or hidden, respectively.
+
+### Identifying recalled memories
+
+Batch results now classify converged outputs as `correct`, `other`, `inverse`
+(of a stored memory), or `unknown`. With noisy-file input and no clean target,
+exact stored matches are labeled `stored`. `not_converged` prevents an
+unfinished recall from being called an attractor. Exact stored matches take
+precedence over inversions; duplicate targets prefer the requested target.
+The three closest stored memories are ranked by signed overlap, with ties
+in file order. CSV appends `attractor,matched_pattern,closest1,overlap1,
+closest2,overlap2,closest3,overlap3`; indices are 1-based, a zero matched
+pattern means none, and unavailable ranking slots are blank.

@@ -224,3 +224,7 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
   Erased pixels start at 0 and display as `?`; final recall remains binary.
   File parsing remains binary-only. CSV appends `corruption,affected_pixels`;
   blocks approximate requested area, edges round down to whole rows/columns.
+
+- `HopfieldAnalysis` classifies completed batch recalls and ranks the three
+  closest stored memories. CSV appends classification and ranking fields;
+  non-converged outputs must not be labeled fixed-point attractors.

@@ -12,6 +12,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(LIB_SOURCE_FILES
     src/HopfieldContext.c
     src/HopfieldCalc.c
+    src/HopfieldAnalysis.c
     src/HopfieldNoise.c
     src/HopfieldIO.c
     src/HopfieldUtil.c

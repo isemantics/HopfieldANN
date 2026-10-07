@@ -34,8 +34,8 @@ for rule in hebbian storkey pseudo-inverse daydreaming modern; do
     "$BIN" "$ROOT/data/hopf01.dat" --rule "$rule" --pattern 1,2 --noise 0 --seed 42 --quiet --verbose --csv first.csv > out
     test ! -s out
     awk -F, -v rule="$rule" '
-        NR == 1 { if ($1 != "rule" || NF != 17) exit 1; next }
-        NF != 17 || $1 != rule || $2 != 42 || $3 != NR-1 ||
+        NR == 1 { if ($1 != "rule" || NF != 25) exit 1; next }
+        NF != 25 || $1 != rule || $2 != 42 || $3 != NR-1 ||
         $4 != "stored" || $5 != 0 || $6 != 100 || $7 < 1 ||
         $14 != "ok" || $8 != "yes" || $9 < -1 || $9 > 1 || $10 < 0 || $10 > $6 ||
         ($9 - (1 - 2*$10/$6))^2 > 1e-20 || $12 < 0 || $13 < 0 { exit 1 }
@@ -80,7 +80,7 @@ done
 awk -F, '
     BEGIN { split("hebbian storkey pseudo-inverse daydreaming modern", rules, " ") }
     NR == 1 { next }
-    NF != 17 || $1 != rules[int((NR-2)/2)+1] || $2 != 42 ||
+    NF != 25 || $1 != rules[int((NR-2)/2)+1] || $2 != 42 ||
     $3 != (NR%2 == 0 ? 2 : 1) || $4 != "stored" || $5 != 20 ||
     $7 < 1 || $14 != "ok" { exit 1 }
     END { if (NR != 11) exit 1 }
@@ -112,7 +112,7 @@ test "$(wc -l < all.csv)" -eq 36
 awk -F, 'NR > 1 && ($4 != "noisy" || $5 != -1) { exit 1 } END { if (NR != 21) exit 1 }' mode2.csv
 expect_failure dependent.dat --compare --noise 0 --seed 42 --quiet --csv dependent.csv
 awk -F, '
-    $1 == "pseudo-inverse" { if (NF != 17 || $14 != "failed" || $9 != "") exit 1; failed++ }
+    $1 == "pseudo-inverse" { if (NF != 25 || $14 != "failed" || $9 != "") exit 1; failed++ }
     $1 == "modern" && $14 == "ok" { modern++ }
     END { if (failed != 1 || modern != 2) exit 1 }
 ' dependent.csv
@@ -135,7 +135,7 @@ printf '1 8 1\n*.*.*.*.\n' > small.dat
 "$BIN" small.dat --compare --sweep 0:100:50 --trials 2 --seed 42 --csv sweep.csv > sweep.out
 awk -F, '
     NR == 1 { if ($15 != "trial") exit 1; next }
-    NF != 17 || $5 != int((NR-2)/10)*50 ||
+    NF != 25 || $5 != int((NR-2)/10)*50 ||
     $15 != int((NR-2)%10/5)+1 || $14 != "ok" { exit 1 }
     END { if (NR != 31) exit 1 }
 ' sweep.csv
@@ -157,12 +157,12 @@ expect_failure small.dat --trials 2
 expect_failure small.dat --sweep 0:10:10 --noise 20
 expect_failure small.dat small.dat --sweep 0:10:10
 expect_failure dependent.dat --compare --sweep 0:10:10 --trials 2 --seed 42 --quiet --csv sweep-failed.csv
-awk -F, '$14 == "failed" { if (NF != 17 || $1 != "pseudo-inverse") exit 1; n++ } END { if (n != 4) exit 1 }' sweep-failed.csv
+awk -F, '$14 == "failed" { if (NF != 25 || $1 != "pseudo-inverse") exit 1; n++ } END { if (n != 4) exit 1 }' sweep-failed.csv
 printf '4 4 1\n*.*.\n.*.*\n*.*.\n.*.*\n' > grid.dat
 for corruption in flip erase block left right top bottom; do
     "$BIN" grid.dat --compare --corruption "$corruption" --noise 50 --seed 42 --csv masks.csv --verbose > masks.out
     awk -F, -v kind="$corruption" '
-        NR > 1 && (NF != 17 || $16 != kind || $17 < 1 || $17 > 16) { exit 1 }
+        NR > 1 && (NF != 25 || $16 != kind || $17 < 1 || $17 > 16) { exit 1 }
         NR == 2 { affected = $17 }
         NR > 2 && $17 != affected { exit 1 }
         END { if (NR != 6) exit 1 }
@@ -194,4 +194,8 @@ expect_failure grid.dat grid.dat --pattern 1 --corruption erase
 # Unknown input pixels are experimental in-memory values, not a file format change.
 printf '1 2 1\n*?\n' > unknown.dat
 expect_failure unknown.dat --pattern 1 --noise 0
+"$BIN" small.dat --rule hebbian --pattern 1 --noise 0 --seed 42 --quiet --csv attractor.csv
+awk -F, 'NR == 2 && (NF != 25 || $18 != "correct" || $19 != 1 || $20 != 1 || $21 != 1 || $22 != "") { exit 1 }' attractor.csv
+"$BIN" small.dat --rule hebbian --pattern 1 --noise 100 --seed 42 --quiet --csv inverse.csv
+awk -F, 'NR == 2 && ($18 != "inverse" || $19 != 1 || $21 != -1) { exit 1 }' inverse.csv
 echo 'Experiment contracts passed.'
