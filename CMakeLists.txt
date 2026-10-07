@@ -2,14 +2,11 @@ cmake_minimum_required(VERSION 3.15)
 
 project(HopfieldANN
         DESCRIPTION "A Hopfield Artificial Neural Network implementation in C"
-        LANGUAGES C CXX
+        LANGUAGES C
         )
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Library (static) for testing
 set(LIB_SOURCE_FILES
@@ -49,24 +46,36 @@ set_target_properties(hopfieldann PROPERTIES
 install(TARGETS hopfieldann RUNTIME DESTINATION ".")
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/data" DESTINATION ".")
 
-# Test target
-enable_testing()
-find_package(GTest REQUIRED)
+# Tests can be disabled for a C-only application build.
+include(CTest)
+if(BUILD_TESTING)
+    enable_language(CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    find_package(GTest REQUIRED)
 
-set(TEST_SOURCE_FILES
-    test/testHopfieldCalc.cpp
-)
+    add_executable(hopfield_test test/testHopfieldCalc.cpp)
+    # FindGTest before CMake 3.20 exposes the older imported target name.
+    if(TARGET GTest::gtest_main)
+        target_link_libraries(hopfield_test PRIVATE GTest::gtest_main hopfield_lib)
+    else()
+        target_link_libraries(hopfield_test PRIVATE GTest::Main hopfield_lib)
+    endif()
 
-add_executable(hopfield_test ${TEST_SOURCE_FILES})
-target_link_libraries(hopfield_test GTest::gtest_main hopfield_lib)
-target_include_directories(hopfield_test PRIVATE src)
+    add_test(NAME HopfieldTest COMMAND hopfield_test
+             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
-add_test(NAME HopfieldTest COMMAND hopfield_test WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
-
-# CLI contract tests drive the binary through a bash harness (needs a Unix shell)
-if(NOT WIN32)
-    add_test(NAME CliContract
-             COMMAND bash ${PROJECT_SOURCE_DIR}/testScripts/cli_contract_test.sh
-                         $<TARGET_FILE:hopfieldann>
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    # CLI contract tests require Bash on Unix.
+    if(UNIX)
+        find_program(BASH_EXECUTABLE NAMES bash)
+        if(BASH_EXECUTABLE)
+            add_test(NAME CliContract
+                     COMMAND "${BASH_EXECUTABLE}"
+                             "${PROJECT_SOURCE_DIR}/testScripts/cli_contract_test.sh"
+                             $<TARGET_FILE:hopfieldann>
+                     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+        else()
+            message(WARNING "Bash not found; CliContract test is disabled")
+        endif()
+    endif()
 endif()

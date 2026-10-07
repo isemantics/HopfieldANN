@@ -259,8 +259,15 @@ a large distance indicates convergence to a spurious attractor or the wrong lear
 
 ## Building: using C17, CMake and make
 
-**Prerequisites:** CMake >= 3.15, a C17-compatible compiler, and Google Test
-(`libgtest-dev` on Debian/Ubuntu, `gtest` on macOS via Homebrew).
+**Prerequisites:** CMake >= 3.15, a C17-compatible compiler, and a build tool
+(such as Make or Ninja). Tests are enabled by default and additionally require
+a C++17-compatible compiler and Google Test (`libgtest-dev` on Debian/Ubuntu,
+`gtest` on macOS via Homebrew). The CLI currently uses POSIX APIs, including
+`getopt_long`; native MSVC builds require portability work.
+
+On Debian/Ubuntu, install the build and test dependencies with:
+
+    sudo apt-get install cmake build-essential libgtest-dev
 
 All storage (patterns, noisy patterns and the weight matrix) is allocated
 dynamically at load time based on the input file header, so there is no fixed
@@ -270,11 +277,17 @@ Go to the **HopfieldANN** directory. Use *CMake* and *make* to build the applica
 
     git clone https://github.com/josokw/HopfieldANN.git
     cd HopfieldANN
-    mkdir build && cd build
-    cmake ..
-    make -j
+    cmake -S . -B build
+    cmake --build build --parallel
 
-The executable can be found in the *bin* directory.
+The executable can be found at `bin/hopfieldann`. Run from the repository root:
+
+    ./bin/hopfieldann data/hopf01.dat
+
+To build only the application, without Google Test or a C++ compiler:
+
+    cmake -S . -B build -DBUILD_TESTING=OFF
+    cmake --build build --parallel
 
 ## Executing: using an input file containing patterns to learn
 
@@ -425,11 +438,12 @@ Using file redirection for generating test data:
 
 ## Running tests
 
-The project includes a Google Test suite. From the build directory:
+The project includes a Google Test suite and, on Unix with Bash, a CLI contract
+test. From the repository root (explicitly re-enabling tests if previously disabled):
 
-    cmake ..
-    make -j
-    ctest --output-on-failure
+    cmake -S . -B build -DBUILD_TESTING=ON
+    cmake --build build --parallel
+    (cd build && ctest --output-on-failure)
 
 ## License
 
