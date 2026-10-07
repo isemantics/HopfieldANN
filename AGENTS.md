@@ -191,3 +191,12 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
 - Never commit secrets; check nothing new goes into `bin/`, `build/`,
   `graphify-out/`, or the `session-ses_*.md` session logs (all gitignored) unless
   a tracked copy is intended.
+
+## Experiment CLI
+
+- `--pattern LIST --noise PERCENT` runs headless batch simulations;
+  `--csv FILE` exports metrics (see README for column semantics).
+- Batch exit codes: 0 success, 1 usage/I/O/learning failure,
+  2 non-convergence, 3 invalid pattern index.
+- `ExperimentContract` checks seed reproducibility and CSV contracts in
+  an isolated temporary directory, in addition to the two original tests.

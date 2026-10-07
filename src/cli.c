@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #define MAXFILENAME_SIZE 100
@@ -51,6 +52,9 @@ typedef struct {
    char *loadWeightsFile;
    bool helpRequested;
    bool batchMode;
+   const char *csvFile;
+   FILE *csv;
+   double trainingSeconds;
 } BatchConfig;
 
 /* Settings loaded from config file. */
@@ -66,6 +70,29 @@ typedef struct {
    char *loadWeightsFile;
    char *outputFile;
 } ConfigFileSettings;
+
+/* Detect aliases too, so CSV export cannot truncate an input or another
+   requested output. */
+static bool same_file(const char *a, const char *b)
+{
+   if (a == NULL || b == NULL)
+      return false;
+   struct stat sa, sb;
+   return strcmp(a, b) == 0 ||
+          (stat(a, &sa) == 0 && stat(b, &sb) == 0 &&
+           sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino);
+}
+
+static const char *rule_key(LearningRule rule)
+{
+   switch (rule) {
+      case RULE_STORKEY: return "storkey";
+      case RULE_PSEUDO_INVERSE: return "pseudo-inverse";
+      case RULE_DAYDREAMING: return "daydreaming";
+      case RULE_MODERN: return "modern";
+      default: return "hebbian";
+   }
+}
 
 static bool parse_seed(const char *text, unsigned int *seed)
 {
@@ -106,7 +133,7 @@ static void free_batch_config(BatchConfig *cfg);
 static bool read_config_file(ConfigFileSettings *settings);
 static bool apply_config_to_batch(const ConfigFileSettings *config,
                                   BatchConfig *cfg);
-static int run_batch_mode(HopfieldContext *ctx, const BatchConfig *cfg,
+static int run_batch_mode(HopfieldContext *ctx, BatchConfig *cfg,
                           SimState *state, bool mode2);
 static int run_single_pattern(HopfieldContext *ctx, int patternIndex,
                               int noisePercent, const BatchConfig *cfg,
@@ -115,6 +142,8 @@ static int run_single_pattern(HopfieldContext *ctx, int patternIndex,
 struct VerboseCallbackData {
    const HopfieldContext *ctx;
    const double *inputPattern;
+   int iterations;
+   bool verbose;
 };
 
 static void verbose_iteration_callback(int iteration, double energy,
@@ -123,6 +152,9 @@ static void verbose_iteration_callback(int iteration, double energy,
 {
    struct VerboseCallbackData *data = user_data;
    if (data == NULL)
+      return;
+   data->iterations = iteration;
+   if (!data->verbose)
       return;
    showPatternAndDifference(data->ctx, data->inputPattern, pattern);
    printf("\n    Energy = %9.4f\n\n", energy);
@@ -151,6 +183,12 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       print_usage();
       free_batch_config(&cfg);
       return 0;
+   }
+
+   if (cfg.csvFile && !cfg.batchMode) {
+      fprintf(stderr, "Error: --csv requires --pattern\n");
+      free_batch_config(&cfg);
+      return 1;
    }
 
    /* Load config file (CLI overrides config) */
@@ -191,6 +229,16 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
 
    const char *patternFile = argv[optind];
    const char *noisyFile = (argc - optind == 2) ? argv[optind + 1] : NULL;
+
+   if (same_file(cfg.csvFile, patternFile) ||
+       same_file(cfg.csvFile, noisyFile) ||
+       same_file(cfg.csvFile, cfg.outputFile) ||
+       same_file(cfg.csvFile, cfg.saveWeightsFile) ||
+       same_file(cfg.csvFile, cfg.loadWeightsFile)) {
+      fprintf(stderr, "Error: CSV must use a separate file\n");
+      free_batch_config(&cfg);
+      return 1;
+   }
 
    /* Load pattern file */
    if (!cfg.quiet) {
@@ -733,6 +781,7 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    cfg->rule = RULE_HEBBIAN;
 
    static struct option long_options[] = {
+      {"csv", required_argument, 0, 'c'},
       {"rule", required_argument, 0, 'r'},
       {"pattern", required_argument, 0, 'p'},
       {"noise", required_argument, 0, 'n'},
@@ -746,9 +795,12 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
       {0, 0, 0, 0}};
 
    int opt;
-   while ((opt = getopt_long(argc, argv, "r:p:n:s:qvho:w:l:", long_options,
+   while ((opt = getopt_long(argc, argv, "r:p:n:s:qvho:w:l:c:", long_options,
                              NULL)) != -1) {
       switch (opt) {
+         case 'c':
+            cfg->csvFile = optarg;
+            break;
          case 'r': {
             if (strcasecmp(optarg, "hebbian") == 0)
                cfg->rule = RULE_HEBBIAN;
@@ -985,7 +1037,7 @@ static bool apply_config_to_batch(const ConfigFileSettings *config,
    return true;
 }
 
-static int run_batch_mode(HopfieldContext *ctx, const BatchConfig *cfg,
+static int run_batch_mode(HopfieldContext *ctx, BatchConfig *cfg,
                           SimState *state, bool mode2)
 {
    bool allConverged = true;
@@ -1001,7 +1053,7 @@ static int run_batch_mode(HopfieldContext *ctx, const BatchConfig *cfg,
       }
       if (!hopfield_load_weights(ctx, cfg->loadWeightsFile)) {
          fprintf(stderr, "\n\tERROR: Failed to load weights\n\n");
-         return false;
+         return 1;
       }
       if (!cfg->quiet) {
          printf("ready\n\n");
@@ -1014,13 +1066,16 @@ static int run_batch_mode(HopfieldContext *ctx, const BatchConfig *cfg,
                                 &state->inputPatternWithNoise,
                                 &state->outputPattern)) {
          fprintf(stderr, "Error: Out of memory\n");
-         return false;
+         return 1;
       }
    }
    else {
+      clock_t trainingStart = clock();
       if (!prepare_network(ctx, rule, state, cfg->quiet)) {
-         return false;
+         return 1;
       }
+      cfg->trainingSeconds =
+         (double)(clock() - trainingStart) / CLOCKS_PER_SEC;
       if (cfg->saveWeightsFile) {
          if (!cfg->quiet) {
             printf("- Saving weight matrix to %s .... ",
@@ -1028,7 +1083,7 @@ static int run_batch_mode(HopfieldContext *ctx, const BatchConfig *cfg,
          }
          if (!hopfield_save_weights(ctx, cfg->saveWeightsFile)) {
             fprintf(stderr, "\n\tERROR: Failed to save weights\n\n");
-            return false;
+            return 1;
          }
          if (!cfg->quiet) {
             printf("ready\n\n");
@@ -1047,17 +1102,45 @@ static int run_batch_mode(HopfieldContext *ctx, const BatchConfig *cfg,
       }
    }
 
+   if (cfg->csvFile) {
+      cfg->csv = fopen(cfg->csvFile, "w");
+      if (cfg->csv == NULL) {
+         fprintf(stderr, "Error: Cannot open CSV file '%s'\n", cfg->csvFile);
+         return 1;
+      }
+      fprintf(cfg->csv,
+              "rule,seed,pattern,reference,noise_percent,neurons,"
+              "iterations,converged,overlap,hamming,energy,"
+              "training_seconds,recall_seconds\n");
+   }
+
+   int result = 0;
    /* Run for each pattern */
    for (int i = 0; i < cfg->nPatterns; i++) {
       bool converged = false;
       bool firstPattern = (i == 0 && cfg->outputFile);
       int ret = run_single_pattern(ctx, cfg->patterns[i], cfg->noise, cfg,
                                    state, &converged, firstPattern, mode2);
-      if (ret < 0)
-         return ret; /* -1 = error, -3 = invalid index */
+      if (ret < 0) {
+         result = 1;
+         break;
+      }
       if (!converged)
          allConverged = false;
    }
+
+   if (cfg->csv) {
+      bool failed = ferror(cfg->csv) != 0;
+      if (fclose(cfg->csv) != 0)
+         failed = true;
+      cfg->csv = NULL;
+      if (failed) {
+         fprintf(stderr, "Error: Failed to write CSV results\n");
+         result = 1;
+      }
+   }
+   if (result != 0)
+      return result;
 
    if (!cfg->quiet) {
       if (allConverged) {
@@ -1094,7 +1177,10 @@ static int run_single_pattern(HopfieldContext *ctx, int patternIndex,
       copyPattern(ctx->patternSize, ctx->patterns[patternIndex],
                   state->inputPatternWithNoise);
 
-      addNoiseToPattern(ctx, patternIndex, noisePercent);
+      if (addNoiseToPattern(ctx, patternIndex, noisePercent) < 0) {
+         fprintf(stderr, "Error: Failed to allocate noisy input\n");
+         return -1;
+      }
       copyPattern(ctx->patternSize, ctx->noisyPatterns[patternIndex],
                   state->inputPatternWithNoise);
 
@@ -1105,18 +1191,34 @@ static int run_single_pattern(HopfieldContext *ctx, int patternIndex,
    }
 
    double finalEnergy;
-   struct VerboseCallbackData cb_data = {ctx, state->inputPattern};
-   ConvergenceCallback callback =
-      cfg->verbose ? verbose_iteration_callback : NULL;
+   struct VerboseCallbackData cb_data = {
+      ctx, state->inputPattern, 0, cfg->verbose && !cfg->quiet};
+   clock_t recallStart = clock();
    *converged = convergePattern(ctx, state->inputPatternWithNoise,
-                                state->outputPattern, callback, &cb_data,
+                                state->outputPattern,
+                                verbose_iteration_callback, &cb_data,
                                 &finalEnergy);
 
+   double recallSeconds = (double)(clock() - recallStart) / CLOCKS_PER_SEC;
+   if (cb_data.iterations == 0) {
+      fprintf(stderr, "Error: Recall failed before first iteration\n");
+      return -1;
+   }
+   double overlap = calcOverlap(ctx->patternSize, state->inputPattern,
+                                state->outputPattern);
+   int hamming = calcHammingDistance(
+      ctx->patternSize, state->inputPattern, state->outputPattern);
+   if (cfg->csv) {
+      fprintf(cfg->csv,
+              "%s,%u,%d,%s,%d,%d,%d,%s,%.17g,%d,%.17g,%.9f,%.9f\n",
+              cfg->loadWeightsFile ? "loaded" : rule_key(cfg->rule),
+              cfg->seed, patternIndex + 1, mode2 ? "noisy" : "stored",
+              mode2 ? -1 : noisePercent, ctx->patternSize,
+              cb_data.iterations, *converged ? "yes" : "no",
+              overlap, hamming, finalEnergy, cfg->trainingSeconds,
+              recallSeconds);
+   }
    if (!cfg->quiet) {
-      double overlap = calcOverlap(ctx->patternSize, state->inputPattern,
-                                   state->outputPattern);
-      int hamming = calcHammingDistance(
-         ctx->patternSize, state->inputPattern, state->outputPattern);
       print_batch_result(patternIndex + 1, overlap, hamming,
                          ctx->patternSize, *converged);
    }
@@ -1154,8 +1256,10 @@ static bool save_recall_output(const HopfieldContext *ctx,
       fprintf(f, "\n");
    }
 
-   fclose(f);
-   return true;
+   bool success = ferror(f) == 0;
+   if (fclose(f) != 0)
+      success = false;
+   return success;
 }
 
 static void print_batch_result(int patternIdx, double overlap, int hamming,
@@ -1182,6 +1286,7 @@ static void print_usage(void)
    printf(
       "  -n, --noise PERCENT       Noise level 0..100 (mode 1 only)\n");
    printf("  -s, --seed VALUE          Random seed for reproducibility\n");
+   printf("  -c, --csv FILE            Export batch metrics as CSV\n");
    printf("  -q, --quiet               Suppress non-error output\n");
    printf("  -v, --verbose             Show energy per iteration\n");
    printf("  -o, --output FILE         Save recall pattern to FILE\n");

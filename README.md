@@ -398,6 +398,7 @@ A warning is shown if the number of stored patterns exceeds the theoretical capa
 | `-p, --pattern LIST` | Pattern indices 1..N, comma-separated (e.g., `1,3,5`). In mode 2, uses noisy pattern indices. |
 | `-n, --noise PERCENT` | Noise level 0–100 (mode 1 only) |
 | `-s, --seed VALUE` | Random seed for reproducible runs |
+| `-c, --csv FILE` | Write one CSV metrics row per batch simulation (overwrites FILE) |
 | `-q, --quiet` | Suppress non-error output; only exit code indicates result |
 | `-v, --verbose` | Show energy per iteration during convergence |
 | `-o, --output FILE` | Save recall pattern(s) to FILE (appends for multiple patterns) |
@@ -499,3 +500,37 @@ Repeat the same command, inputs and seed on the same build/C runtime to
 reproduce stochastic training, noise and recall. Random sequences are not
 portable across different C runtimes. Reload and repeat continue the session's
 random sequence rather than resetting it.
+
+### CSV experiment results
+
+```bash
+./bin/hopfieldann data/hopf01.dat --rule storkey --pattern 1,3,5 \
+  --noise 20 --seed 42 --quiet --csv results.csv
+```
+
+`--pattern` selects batch mode; no stdin is needed. `--csv` requires batch
+mode and writes a header plus one row per selected pattern, in list order.
+It can be combined with `--output` using separate destination files.
+
+Columns: `rule`, `seed`, `pattern` (1-based), `reference`, `noise_percent`,
+`neurons`, `iterations`, `converged`, `overlap`, `hamming`, `energy`,
+`training_seconds`, `recall_seconds`. Rule names match the CLI values;
+loaded weights use `loaded` because the binary format does not retain the
+original learning rule. Training time is zero when weights are loaded.
+Times measure process CPU seconds, may round to zero for tiny experiments,
+and naturally vary between runs. Training time includes network preparation
+and is repeated on each row; it is not a per-pattern cost. Recall time
+includes callback/display work when verbose output is enabled.
+
+For generated noise, metrics compare recall with the original stored pattern
+(`reference=stored`). With a noisy input file, no target mapping is known:
+metrics compare with that noisy input (`reference=noisy`, `noise_percent=-1`),
+so they do **not** measure reconstruction accuracy against a clean target.
+Convergence means a stopping criterion was met, not necessarily correct
+recognition. Modern energy is measured before thresholding the continuous
+state; overlap/Hamming describe the final binary output. Energies from
+different learning rules are not directly comparable.
+
+Write/open/learning failures return exit code 1. A failed run may leave a
+partial CSV; only consume it as complete when the process succeeds (or
+returns 2 for completed recalls that did not all converge).
