@@ -207,3 +207,9 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
   unchanged across rules, and seed only once per command. CSV `status`
   distinguishes completed recalls from failed rules; continue other rules
   after a learning failure and return exit code 1.
+
+- `--sweep START:END:STEP --trials N` runs fresh training/corruption per
+  repetition (default 10), optionally with `--compare`. END is an inclusive
+  bound. CSV appends a 1-based `trial`; summaries aggregate each noise level.
+  Sweeps require clean patterns and reject explicit `--noise` and weight or
+  pattern output options. Preserve shared inputs within each comparison.

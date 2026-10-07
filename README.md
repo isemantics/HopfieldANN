@@ -515,7 +515,7 @@ It can be combined with `--output` using separate destination files.
 
 Columns: `rule`, `seed`, `pattern` (1-based), `reference`, `noise_percent`,
 `neurons`, `iterations`, `converged`, `overlap`, `hamming`, `energy`,
-`training_seconds`, `recall_seconds`, `status`. Rule names match the CLI values;
+`training_seconds`, `recall_seconds`, `status`, `trial` (1-based). Rule names match the CLI values;
 loaded weights use `loaded` because the binary format does not retain the
 original learning rule. Training time is zero when weights are loaded.
 Times measure process CPU seconds, may round to zero for tiny experiments,
@@ -571,3 +571,33 @@ with that seed. Use several seeds for a broader evaluation. For useful timing
 comparisons, omit `--verbose`. `--compare` cannot be combined with `--rule`,
 weight load/save or pattern output. A configured rule is ignored; configured
 weight/pattern output options are rejected as incompatible.
+
+### Automatic noise sweeps
+
+```bash
+# Quick comparison: all rules, three levels, two repetitions
+./bin/hopfieldann data/hopf01.dat --compare --pattern 1,2 \
+  --sweep 0:40:20 --trials 2 --seed 42 --csv sweep.csv
+
+# Full curve for one rule (all stored patterns by default)
+./bin/hopfieldann data/hopf01.dat --rule storkey \
+  --sweep 0:100:10 --trials 10 --seed 42 --csv storkey.csv
+```
+
+`--sweep START:END:STEP` runs ascending percentages within 0..100, with a
+positive step; END is an inclusive upper bound (0:25:10 visits 0, 10, 20).
+`--trials N` defaults to 10 and requires a sweep. Each repetition trains
+again and generates fresh corruption, so stochastic learning variability
+is included. With `--compare`, corrupted inputs are generated before training
+and shared across all five rules for that repetition. One seed controls the
+whole experiment; timings vary. Large Daydreaming sweeps can take a while.
+
+Console `Sweep` summaries give completed sample counts, exact recognition
+counts/percentages, convergence counts and mean overlap/Hamming per rule
+and noise level. Samples are selected patterns times repetitions; convergence
+alone is not successful recognition. CSV contains individual results in
+level, trial, rule, selection order, with the `trial` column identifying the
+repetition. Failed rules retain their noise level/trial in `status=failed`
+rows and cause exit code 1; summaries exclude failed batches. A second
+(noisy) input file, `--noise`, weight load/save and pattern output are
+incompatible with sweeps. Configured noise is replaced by the sweep range.
