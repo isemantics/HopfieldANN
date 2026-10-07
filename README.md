@@ -665,3 +665,22 @@ The three closest stored memories are ranked by signed overlap, with ties
 in file order. CSV appends `attractor,matched_pattern,closest1,overlap1,
 closest2,overlap2,closest3,overlap3`; indices are 1-based, a zero matched
 pattern means none, and unavailable ranking slots are blank.
+
+### Growing-memory capacity experiments
+
+```bash
+./bin/hopfieldann data/hopf01.dat --capacity --compare --noise 20 \
+  --trials 3 --seed 42 --csv capacity.csv
+```
+
+`--capacity` trains prefixes of 1, 2, ... all memories, in input-file order.
+At each size it tests every currently learned memory with fresh training and
+corruption for each repetition (`--trials`, default 10). `--compare` pairs
+identical inputs across all five rules. Use `--rule` for one rule and
+`--corruption` to investigate missing information. Console summaries show
+recognition percentage and mean quality per rule and memory count. CSV
+appends `stored_patterns` (also present on ordinary runs and failed rows).
+This is an empirical curve for this dataset/order, not a universal capacity
+estimate. Noise stays fixed; `--sweep`, `--pattern`, a noisy input file and
+weight/pattern output options are incompatible. Failed learning at a size
+is recorded; later sizes/rules still run and the final exit code is 1.

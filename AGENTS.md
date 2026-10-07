@@ -228,3 +228,7 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
 - `HopfieldAnalysis` classifies completed batch recalls and ranks the three
   closest stored memories. CSV appends classification and ranking fields;
   non-converged outputs must not be labeled fixed-point attractors.
+
+- `--capacity --noise PERCENT [--compare] --trials N` tests growing memory
+  prefixes. Test only currently learned targets, restore ctx->nPatterns
+  after the experiment, and report `stored_patterns` in CSV.

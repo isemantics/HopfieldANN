@@ -64,6 +64,7 @@ typedef struct {
    double trainingSeconds;
    bool compare;
    bool sweep;
+   bool capacity;
    HopfieldNoise corruption;
    bool corruptionSet;
    int sweepStart, sweepEnd, sweepStep;
@@ -169,6 +170,8 @@ static bool apply_config_to_batch(const ConfigFileSettings *config,
                                   BatchConfig *cfg);
 static int run_batch_mode(HopfieldContext *ctx, BatchConfig *cfg,
                           SimState *state, bool mode2);
+static int run_capacity(HopfieldContext *ctx, BatchConfig *cfg,
+                        SimState *state);
 static int run_sweep(HopfieldContext *ctx, BatchConfig *cfg,
                      SimState *state);
 static int run_comparison(HopfieldContext *ctx, BatchConfig *cfg,
@@ -246,7 +249,7 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
    }
    apply_config_to_batch(&config, &cfg);
 
-   if ((cfg.compare || cfg.sweep) && (cfg.loadWeightsFile || cfg.saveWeightsFile ||
+   if ((cfg.compare || cfg.sweep || cfg.capacity) && (cfg.loadWeightsFile || cfg.saveWeightsFile ||
                        cfg.outputFile)) {
       fprintf(stderr, "Error: --compare/--sweep cannot use weight or pattern "
                       "output files; use --csv for results\n");
@@ -278,8 +281,8 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       free_batch_config(&cfg);
       return 1;
    }
-   if (cfg.sweep && mode2) {
-      fprintf(stderr, "Error: --sweep requires clean stored patterns\n");
+   if ((cfg.sweep || cfg.capacity) && mode2) {
+      fprintf(stderr, "Error: --sweep/--capacity requires clean stored patterns\n");
       free_batch_config(&cfg);
       return 1;
    }
@@ -348,7 +351,10 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
    int result = 0;
 
    /* Batch mode or interactive */
-   if (cfg.sweep) {
+   if (cfg.capacity) {
+      result = run_capacity(ctx, &cfg, &state);
+   }
+   else if (cfg.sweep) {
       result = run_sweep(ctx, &cfg, &state);
    }
    else if (cfg.compare) {
@@ -848,6 +854,7 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    cfg->rule = RULE_HEBBIAN;
 
    static struct option long_options[] = {
+      {"capacity", no_argument, 0, 260},
       {"corruption", required_argument, 0, 259},
       {"sweep", required_argument, 0, 257},
       {"trials", required_argument, 0, 258},
@@ -869,6 +876,9 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    while ((opt = getopt_long(argc, argv, "r:p:n:s:qvho:w:l:c:", long_options,
                              NULL)) != -1) {
       switch (opt) {
+         case 260:
+            cfg->capacity = true;
+            break;
          case 259: {
             bool found = false;
             for (HopfieldNoise noise = HOPFIELD_NOISE_FLIP;
@@ -1004,14 +1014,18 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
 
    /* Batch mode if pattern(s) specified (mode 1) or pattern specified
     * (mode 2) */
-   if ((cfg->trials && !cfg->sweep) || (cfg->sweep && cfg->noise >= 0)) {
-      fprintf(stderr, "Error: --trials requires --sweep; "
+   if ((cfg->trials && !cfg->sweep && !cfg->capacity) || (cfg->sweep && cfg->noise >= 0)) {
+      fprintf(stderr, "Error: --trials requires --sweep or --capacity; "
                       "--sweep replaces --noise\n");
+      return false;
+   }
+   if (cfg->capacity && (cfg->sweep || cfg->nPatterns > 0)) {
+      fprintf(stderr, "Error: --capacity cannot use --sweep or --pattern\n");
       return false;
    }
    if (!cfg->trials)
       cfg->trials = 10;
-   cfg->batchMode = cfg->sweep || cfg->compare || (cfg->nPatterns > 0);
+   cfg->batchMode = cfg->capacity || cfg->sweep || cfg->compare || (cfg->nPatterns > 0);
 
    /* --load-weights and --rule are compatible but warn if both set */
    if (cfg->loadWeightsFile && cfg->ruleSet) {
@@ -1183,7 +1197,7 @@ static bool open_csv(BatchConfig *cfg)
    fprintf(cfg->csv,
            "rule,seed,pattern,reference,noise_percent,neurons,"
            "iterations,converged,overlap,hamming,energy,"
-           "training_seconds,recall_seconds,status,trial,corruption,affected_pixels,attractor,matched_pattern,closest1,overlap1,closest2,overlap2,closest3,overlap3\n");
+           "training_seconds,recall_seconds,status,trial,corruption,affected_pixels,attractor,matched_pattern,closest1,overlap1,closest2,overlap2,closest3,overlap3,stored_patterns\n");
    return true;
 }
 
@@ -1276,7 +1290,7 @@ static int run_batch_mode(HopfieldContext *ctx, BatchConfig *cfg,
    if (!valid_selections(ctx, cfg, mode2))
       return 3;
 
-   bool ownsCsv = !cfg->compare && !cfg->sweep;
+   bool ownsCsv = !cfg->compare && !cfg->sweep && !cfg->capacity;
    if (ownsCsv && !open_csv(cfg))
       return 1;
 
@@ -1309,7 +1323,7 @@ static int run_batch_mode(HopfieldContext *ctx, BatchConfig *cfg,
       }
    }
 
-   if (cfg->sweep) {
+   if (cfg->sweep || cfg->capacity) {
       SweepTotals *total = &cfg->sweepTotals[cfg->rule];
       total->count += cfg->nPatterns;
       total->exact += cfg->exactMatches;
@@ -1342,6 +1356,59 @@ static int select_defaults(const HopfieldContext *ctx, BatchConfig *cfg,
    return 0;
 }
 
+/* Use prefixes of the loaded memories without reallocating their storage.
+   Restore metadata before context cleanup, even when an experiment fails. */
+static int run_capacity(HopfieldContext *ctx, BatchConfig *cfg,
+                        SimState *state)
+{
+   int originalCount = ctx->nPatterns;
+   int result = select_defaults(ctx, cfg, false);
+   if (result != 0 || !open_csv(cfg))
+      return result != 0 ? result : 1;
+   for (int count = 1; count <= originalCount; count++) {
+      ctx->nPatterns = count;
+      cfg->nPatterns = count;
+      memset(cfg->sweepTotals, 0, sizeof(cfg->sweepTotals));
+      for (int trial = 0; trial < cfg->trials; trial++) {
+         cfg->trial = trial + 1;
+         int status = cfg->compare
+            ? run_comparison(ctx, cfg, state, false)
+            : run_batch_mode(ctx, cfg, state, false);
+         if (status == 1 || status == 3) {
+            result = 1;
+            if (!cfg->compare && cfg->csv)
+               fprintf(cfg->csv,
+                       "%s,%u,,,%d,,,,,,,,,failed,%d,%s,,,,,,,,,,%d\n",
+                       rule_key(cfg->rule), cfg->seed, cfg->noise,
+                       cfg->trial, noise_key(cfg->corruption), count);
+         }
+         else if (status == 2 && result == 0)
+            result = 2;
+      }
+      if (!cfg->quiet) {
+         for (LearningRule rule = RULE_HEBBIAN; rule <= RULE_MODERN; rule++) {
+            if (!cfg->compare && rule != cfg->rule)
+               continue;
+            const SweepTotals *t = &cfg->sweepTotals[rule];
+            if (t->count > 0.0)
+               printf("Capacity %s stored=%d: samples=%.0f "
+                      "correct_percent=%.2f mean_overlap=%.4f "
+                      "mean_hamming=%.2f\n", rule_key(rule), count,
+                      t->count, 100.0 * t->exact / t->count,
+                      t->overlap / t->count, t->hamming / t->count);
+            else
+               printf("Capacity %s stored=%d: no completed samples\n",
+                      rule_key(rule), count);
+         }
+      }
+   }
+   ctx->nPatterns = originalCount;
+   cfg->nPatterns = originalCount;
+   if (!close_csv(cfg))
+      result = 1;
+   return result;
+}
+
 static int run_sweep(HopfieldContext *ctx, BatchConfig *cfg,
                      SimState *state)
 {
@@ -1360,9 +1427,9 @@ static int run_sweep(HopfieldContext *ctx, BatchConfig *cfg,
          if (status == 1 || status == 3) {
             result = 1;
             if (!cfg->compare && cfg->csv)
-               fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,,,,,,,,,\n",
+               fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,,,,,,,,,,%d\n",
                        rule_key(cfg->rule), cfg->seed, noise, cfg->trial,
-                       noise_key(cfg->corruption));
+                       noise_key(cfg->corruption), ctx->nPatterns);
          }
          else if (status == 2 && result == 0)
             result = 2;
@@ -1416,7 +1483,7 @@ static int run_comparison(HopfieldContext *ctx, BatchConfig *cfg,
          }
       }
    }
-   if (!cfg->sweep && !open_csv(cfg))
+   if (!cfg->sweep && !cfg->capacity && !open_csv(cfg))
       return 1;
 
    int result = 0;
@@ -1435,9 +1502,10 @@ static int run_comparison(HopfieldContext *ctx, BatchConfig *cfg,
          result = 1;
          fprintf(stderr, "Comparison %s: failed\n", rule_key(rule));
          if (cfg->csv)
-            fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,,,,,,,,,\n",
+            fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,,,,,,,,,,%d\n",
                     rule_key(rule), cfg->seed, cfg->noise, cfg->trial,
-                    mode2 ? "file" : noise_key(cfg->corruption));
+                    mode2 ? "file" : noise_key(cfg->corruption),
+                    ctx->nPatterns);
          continue;
       }
       if (status == 2 && result == 0)
@@ -1454,7 +1522,7 @@ static int run_comparison(HopfieldContext *ctx, BatchConfig *cfg,
                 cfg->totalRecallSeconds);
       }
    }
-   if (!cfg->sweep && !close_csv(cfg))
+   if (!cfg->sweep && !cfg->capacity && !close_csv(cfg))
       result = 1;
    return result;
 }
@@ -1562,7 +1630,7 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
          else
             fprintf(cfg->csv, ",,");
       }
-      fputc('\n', cfg->csv);
+      fprintf(cfg->csv, ",%d\n", ctx->nPatterns);
    }
    if (!cfg->quiet) {
       print_batch_result(patternIndex + 1, overlap, hamming,
@@ -1635,6 +1703,7 @@ static void print_usage(void)
    printf("  -s, --seed VALUE          Random seed for reproducibility\n");
    printf("      --corruption TYPE     flip [default], erase, block, "
           "left, right, top, bottom\n");
+   printf("      --capacity           Test growing prefixes of stored memories\n");
    printf("      --sweep A:B:S         Noise range, inclusive bound, step S\n");
    printf("      --trials N            Repetitions per sweep level [10]\n");
    printf("      --compare            Compare all five learning rules\n");
