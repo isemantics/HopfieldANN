@@ -3,6 +3,7 @@
 #include "HopfieldCalc.h"
 #include "HopfieldContext.h"
 #include "HopfieldIO.h"
+#include "HopfieldNoise.h"
 #include "HopfieldUtil.h"
 
 #include <errno.h>
@@ -62,6 +63,8 @@ typedef struct {
    double trainingSeconds;
    bool compare;
    bool sweep;
+   HopfieldNoise corruption;
+   bool corruptionSet;
    int sweepStart, sweepEnd, sweepStep;
    int trials, trial;
    SweepTotals sweepTotals[RULE_MODERN + 1];
@@ -108,6 +111,19 @@ static const char *rule_key(LearningRule rule)
       case RULE_DAYDREAMING: return "daydreaming";
       case RULE_MODERN: return "modern";
       default: return "hebbian";
+   }
+}
+
+static const char *noise_key(HopfieldNoise noise)
+{
+   switch (noise) {
+      case HOPFIELD_NOISE_ERASE: return "erase";
+      case HOPFIELD_NOISE_BLOCK: return "block";
+      case HOPFIELD_NOISE_LEFT: return "left";
+      case HOPFIELD_NOISE_RIGHT: return "right";
+      case HOPFIELD_NOISE_TOP: return "top";
+      case HOPFIELD_NOISE_BOTTOM: return "bottom";
+      default: return "flip";
    }
 }
 
@@ -255,6 +271,12 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
 
    bool mode2 = (argc - optind == 2);
 
+   if (cfg.corruptionSet && (!cfg.batchMode || mode2)) {
+      fprintf(stderr, "Error: --corruption requires batch mode "
+                      "with clean stored patterns\n");
+      free_batch_config(&cfg);
+      return 1;
+   }
    if (cfg.sweep && mode2) {
       fprintf(stderr, "Error: --sweep requires clean stored patterns\n");
       free_batch_config(&cfg);
@@ -280,6 +302,10 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       free_batch_config(&cfg);
       return 1;
    }
+
+   if (cfg.corruptionSet && !cfg.quiet)
+      printf("- Corruption: %s (? = unknown pixel)\n",
+             noise_key(cfg.corruption));
 
    /* Load pattern file */
    if (!cfg.quiet) {
@@ -821,6 +847,7 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    cfg->rule = RULE_HEBBIAN;
 
    static struct option long_options[] = {
+      {"corruption", required_argument, 0, 259},
       {"sweep", required_argument, 0, 257},
       {"trials", required_argument, 0, 258},
       {"compare", no_argument, 0, 256},
@@ -841,6 +868,23 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    while ((opt = getopt_long(argc, argv, "r:p:n:s:qvho:w:l:c:", long_options,
                              NULL)) != -1) {
       switch (opt) {
+         case 259: {
+            bool found = false;
+            for (HopfieldNoise noise = HOPFIELD_NOISE_FLIP;
+                 noise <= HOPFIELD_NOISE_BOTTOM; noise++) {
+               if (strcmp(optarg, noise_key(noise)) == 0) {
+                  cfg->corruption = noise;
+                  found = true;
+                  break;
+               }
+            }
+            if (!found) {
+               fprintf(stderr, "Error: unknown corruption '%s'\n", optarg);
+               return false;
+            }
+            cfg->corruptionSet = true;
+            break;
+         }
          case 257: {
             const char *p = optarg;
             int values[3];
@@ -1138,7 +1182,7 @@ static bool open_csv(BatchConfig *cfg)
    fprintf(cfg->csv,
            "rule,seed,pattern,reference,noise_percent,neurons,"
            "iterations,converged,overlap,hamming,energy,"
-           "training_seconds,recall_seconds,status,trial\n");
+           "training_seconds,recall_seconds,status,trial,corruption,affected_pixels\n");
    return true;
 }
 
@@ -1315,8 +1359,9 @@ static int run_sweep(HopfieldContext *ctx, BatchConfig *cfg,
          if (status == 1 || status == 3) {
             result = 1;
             if (!cfg->compare && cfg->csv)
-               fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d\n",
-                       rule_key(cfg->rule), cfg->seed, noise, cfg->trial);
+               fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,\n",
+                       rule_key(cfg->rule), cfg->seed, noise, cfg->trial,
+                       noise_key(cfg->corruption));
          }
          else if (status == 2 && result == 0)
             result = 2;
@@ -1363,12 +1408,11 @@ static int run_comparison(HopfieldContext *ctx, BatchConfig *cfg,
       }
       for (int i = 0; i < cfg->nPatterns; i++) {
          int index = cfg->patterns[i];
-         if (addNoiseToPattern(ctx, index, cfg->noise) < 0) {
+         if (corruptPattern(ctx, index, cfg->noise, cfg->corruption,
+                            cfg->comparisonInputs[i]) < 0) {
             fprintf(stderr, "Error: Failed to allocate noisy input\n");
             return 1;
          }
-         copyPattern(ctx->patternSize, ctx->noisyPatterns[index],
-                     cfg->comparisonInputs[i]);
       }
    }
    if (!cfg->sweep && !open_csv(cfg))
@@ -1390,8 +1434,9 @@ static int run_comparison(HopfieldContext *ctx, BatchConfig *cfg,
          result = 1;
          fprintf(stderr, "Comparison %s: failed\n", rule_key(rule));
          if (cfg->csv)
-            fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d\n",
-                    rule_key(rule), cfg->seed, cfg->noise, cfg->trial);
+            fprintf(cfg->csv, "%s,%u,,,%d,,,,,,,,,failed,%d,%s,\n",
+                    rule_key(rule), cfg->seed, cfg->noise, cfg->trial,
+                    mode2 ? "file" : noise_key(cfg->corruption));
          continue;
       }
       if (status == 2 && result == 0)
@@ -1442,12 +1487,12 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
                      state->inputPatternWithNoise);
       }
       else {
-         if (addNoiseToPattern(ctx, patternIndex, noisePercent) < 0) {
+         if (corruptPattern(ctx, patternIndex, noisePercent,
+                            cfg->corruption,
+                            state->inputPatternWithNoise) < 0) {
             fprintf(stderr, "Error: Failed to allocate noisy input\n");
             return -1;
          }
-         copyPattern(ctx->patternSize, ctx->noisyPatterns[patternIndex],
-                     state->inputPatternWithNoise);
       }
 
       if (!cfg->quiet) {
@@ -1462,6 +1507,14 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
       showPatternAndDifference(ctx, state->inputPattern,
                                state->inputPatternWithNoise);
    }
+   if (!cfg->compare && cfg->corruptionSet && cfg->verbose && !cfg->quiet) {
+      printf("Input: corruption=%s pattern=%d (? = unknown)\n",
+             noise_key(cfg->corruption), patternIndex + 1);
+      showPatternAndDifference(ctx, state->inputPattern,
+                               state->inputPatternWithNoise);
+   }
+   int affected = mode2 ? -1 : calcHammingDistance(
+      ctx->patternSize, state->inputPattern, state->inputPatternWithNoise);
    double finalEnergy;
    struct VerboseCallbackData cb_data = {
       ctx, state->inputPattern, 0, cfg->verbose && !cfg->quiet};
@@ -1488,13 +1541,15 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
    cfg->convergedCount += *converged;
    if (cfg->csv) {
       fprintf(cfg->csv,
-              "%s,%u,%d,%s,%d,%d,%d,%s,%.17g,%d,%.17g,%.9f,%.9f,ok,%d\n",
+              "%s,%u,%d,%s,%d,%d,%d,%s,%.17g,%d,%.17g,"
+              "%.9f,%.9f,ok,%d,%s,%d\n",
               cfg->loadWeightsFile ? "loaded" : rule_key(cfg->rule),
               cfg->seed, patternIndex + 1, mode2 ? "noisy" : "stored",
               mode2 ? -1 : noisePercent, ctx->patternSize,
               cb_data.iterations, *converged ? "yes" : "no",
               overlap, hamming, finalEnergy, cfg->trainingSeconds,
-              recallSeconds, cfg->trial);
+              recallSeconds, cfg->trial,
+              mode2 ? "file" : noise_key(cfg->corruption), affected);
    }
    if (!cfg->quiet) {
       print_batch_result(patternIndex + 1, overlap, hamming,
@@ -1564,6 +1619,8 @@ static void print_usage(void)
    printf(
       "  -n, --noise PERCENT       Noise level 0..100 (mode 1 only)\n");
    printf("  -s, --seed VALUE          Random seed for reproducibility\n");
+   printf("      --corruption TYPE     flip [default], erase, block, "
+          "left, right, top, bottom\n");
    printf("      --sweep A:B:S         Noise range, inclusive bound, step S\n");
    printf("      --trials N            Repetitions per sweep level [10]\n");
    printf("      --compare            Compare all five learning rules\n");

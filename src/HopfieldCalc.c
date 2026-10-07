@@ -584,7 +584,7 @@ int addNoiseToPattern(HopfieldContext *ctx, const int patNumber,
    if (chance > MAX_NOISE_PERCENT)
       chance = MAX_NOISE_PERCENT;
 
-   int nNoise = ctx->patternSize * chance / 100;
+   int nNoise = (int)((long long)ctx->patternSize * chance / 100);
 
    int *indices = (int *)malloc((size_t)ctx->patternSize * sizeof(int));
    double *noisyPattern =

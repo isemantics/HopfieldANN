@@ -3,11 +3,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <vector>
+#include <algorithm>
 
 extern "C" {
 #include "HopfieldCalc.h"
 #include "HopfieldContext.h"
 #include "HopfieldIO.h"
+#include "HopfieldNoise.h"
 }
 
 enum { TEST_MAX_NEURONS = 1024 };
@@ -1144,4 +1147,128 @@ int main(int argc, char **argv)
 {
    ::testing::InitGoogleTest(&argc, argv);
    return RUN_ALL_TESTS();
+}
+
+
+TEST_F(HopfieldCalcTest, CorruptionPreservesMemoriesAndEndpoints)
+{
+   ASSERT_TRUE(hopfield_context_resize(ctx, 4, 6, 1, 0));
+   std::vector<double> original(24), output(24);
+   for (int i = 0; i < 24; i++)
+      ctx->patterns[0][i] = original[i] = i % 2 ? -1.0 : 1.0;
+   for (int mode = HOPFIELD_NOISE_FLIP; mode <= HOPFIELD_NOISE_BOTTOM;
+        mode++) {
+      auto noise = static_cast<HopfieldNoise>(mode);
+      EXPECT_EQ(corruptPattern(ctx, 0, 0, noise, output.data()), 0);
+      EXPECT_EQ(output, original);
+      EXPECT_EQ(corruptPattern(ctx, 0, 100, noise, output.data()), 24);
+      for (int i = 0; i < 24; i++) {
+         EXPECT_DOUBLE_EQ(output[i], mode == HOPFIELD_NOISE_FLIP
+                                       ? -original[i] : 0.0);
+         EXPECT_DOUBLE_EQ(ctx->patterns[0][i], original[i]);
+      }
+   }
+}
+
+TEST_F(HopfieldCalcTest, RandomErasureUsesSamePositionsAsFlips)
+{
+   ASSERT_TRUE(hopfield_context_resize(ctx, 4, 6, 1, 0));
+   std::vector<double> erased(24), flipped(24);
+   for (int i = 0; i < 24; i++)
+      ctx->patterns[0][i] = i % 2 ? -1.0 : 1.0;
+   srand(17);
+   EXPECT_EQ(corruptPattern(ctx, 0, 25, HOPFIELD_NOISE_FLIP,
+                           flipped.data()), 6);
+   srand(17);
+   EXPECT_EQ(corruptPattern(ctx, 0, 25, HOPFIELD_NOISE_ERASE,
+                           erased.data()), 6);
+   for (int i = 0; i < 24; i++)
+      EXPECT_DOUBLE_EQ(erased[i], equals(flipped[i], ctx->patterns[0][i])
+                                    ? ctx->patterns[0][i] : 0.0);
+}
+
+TEST_F(HopfieldCalcTest, EdgeMasksCoverRequestedSide)
+{
+   ASSERT_TRUE(hopfield_context_resize(ctx, 4, 6, 1, 0));
+   std::fill_n(ctx->patterns[0], 24, 1.0);
+   std::vector<double> output(24);
+   for (int mode = HOPFIELD_NOISE_LEFT; mode <= HOPFIELD_NOISE_BOTTOM;
+        mode++) {
+      auto noise = static_cast<HopfieldNoise>(mode);
+      EXPECT_EQ(corruptPattern(ctx, 0, 50, noise, output.data()), 12);
+      for (int r = 0; r < 4; r++) {
+         for (int c = 0; c < 6; c++) {
+            bool masked = mode == HOPFIELD_NOISE_LEFT ? c < 3 :
+                          mode == HOPFIELD_NOISE_RIGHT ? c >= 3 :
+                          mode == HOPFIELD_NOISE_TOP ? r < 2 : r >= 2;
+            EXPECT_DOUBLE_EQ(output[r * 6 + c], masked ? 0.0 : 1.0);
+         }
+      }
+   }
+}
+
+TEST_F(HopfieldCalcTest, BlockMaskIsRectangularAndReproducible)
+{
+   ASSERT_TRUE(hopfield_context_resize(ctx, 7, 9, 1, 0));
+   std::fill_n(ctx->patterns[0], 63, -1.0);
+   std::vector<double> first(63), second(63);
+   srand(42);
+   int affected = corruptPattern(ctx, 0, 30, HOPFIELD_NOISE_BLOCK,
+                                first.data());
+   srand(42);
+   EXPECT_EQ(corruptPattern(ctx, 0, 30, HOPFIELD_NOISE_BLOCK,
+                           second.data()), affected);
+   EXPECT_EQ(first, second);
+   int top = 7, bottom = -1, left = 9, right = -1, zeros = 0;
+   for (int r = 0; r < 7; r++) {
+      for (int c = 0; c < 9; c++) {
+         if (equals(first[r * 9 + c], 0.0)) {
+            top = std::min(top, r); bottom = std::max(bottom, r);
+            left = std::min(left, c); right = std::max(right, c);
+            zeros++;
+         }
+         else
+            EXPECT_DOUBLE_EQ(first[r * 9 + c], -1.0);
+      }
+   }
+   EXPECT_GT(affected, 0);
+   EXPECT_EQ(zeros, affected);
+   EXPECT_EQ(zeros, (bottom - top + 1) * (right - left + 1));
+}
+
+TEST_F(HopfieldCalcTest, ErasedInputRecallsBinaryMemoryForEveryRule)
+{
+   ASSERT_TRUE(hopfield_context_resize(ctx, 4, 6, 1, 0));
+   for (int i = 0; i < 24; i++)
+      ctx->patterns[0][i] = i % 2 ? -1.0 : 1.0;
+   std::vector<double> input(24), output(24);
+   ASSERT_EQ(corruptPattern(ctx, 0, 50, HOPFIELD_NOISE_LEFT,
+                           input.data()), 12);
+   bool (*rules[])(HopfieldContext *) = {
+      learnHebbian, learnStorkey, learnPseudoInverse,
+      learnDaydreaming, learnModernHopfield};
+   for (auto learn : rules) {
+      srand(42);
+      ASSERT_TRUE(learn(ctx));
+      ASSERT_TRUE(convergePattern(ctx, input.data(), output.data(),
+                                 nullptr, nullptr, nullptr));
+      EXPECT_EQ(calcHammingDistance(24, ctx->patterns[0], output.data()), 0);
+   }
+}
+
+TEST_F(HopfieldCalcTest, CorruptionRejectsInvalidArguments)
+{
+   allocate(8, 1);
+   std::vector<double> output(8);
+   EXPECT_EQ(corruptPattern(nullptr, 0, 50, HOPFIELD_NOISE_ERASE,
+                           output.data()), -1);
+   EXPECT_EQ(corruptPattern(ctx, 0, 50, HOPFIELD_NOISE_ERASE, nullptr), -1);
+   EXPECT_EQ(corruptPattern(ctx, 1, 50, HOPFIELD_NOISE_ERASE,
+                           output.data()), -1);
+   EXPECT_EQ(corruptPattern(ctx, 0, -1, HOPFIELD_NOISE_ERASE,
+                           output.data()), -1);
+   EXPECT_EQ(corruptPattern(ctx, 0, 101, HOPFIELD_NOISE_ERASE,
+                           output.data()), -1);
+   EXPECT_EQ(corruptPattern(ctx, 0, 50, static_cast<HopfieldNoise>(99),
+                           output.data()), -1);
 }

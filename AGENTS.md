@@ -40,9 +40,9 @@ make -j
 cd build && cmake .. && make -j && ctest --output-on-failure
 ```
 
-Two CTest tests:
+Three CTest tests:
 
-1. `HopfieldTest` — Google Test at `test/testHopfieldCalc.cpp`, **57 `TEST_F`
+1. `HopfieldTest` — Google Test at `test/testHopfieldCalc.cpp`, **66 `TEST_F`
    cases** across two suites:
    - `HopfieldCalcTest` — util helpers, learning rules (all five, incl.
      pseudo-inverse rejection of linearly dependent patterns), symmetry/diagonal
@@ -58,6 +58,10 @@ Two CTest tests:
    (Unix only): pipes stdin into the binary, asserts exit codes, key output lines,
    and occurrences (usage, error paths, noise/index validation, R/Enter repeat,
    L reload, capacity warning, mode 2). Run from the project root.
+
+3. `ExperimentContract` — `testScripts/experiment_contract_test.sh`
+   checks reproducibility, CSV exports, rule comparisons, noise sweeps and
+   spatial corruption in an isolated temporary directory.
 
 ## Input data format
 
@@ -213,3 +217,10 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
   bound. CSV appends a 1-based `trial`; summaries aggregate each noise level.
   Sweeps require clean patterns and reject explicit `--noise` and weight or
   pattern output options. Preserve shared inputs within each comparison.
+
+- `--corruption flip|erase|block|left|right|top|bottom` selects generated
+  corruption in batch/compare/sweep mode; default flip retains old behavior.
+  `src/HopfieldNoise.{h,c}` generates masks without modifying stored memories.
+  Erased pixels start at 0 and display as `?`; final recall remains binary.
+  File parsing remains binary-only. CSV appends `corruption,affected_pixels`;
+  blocks approximate requested area, edges round down to whole rows/columns.

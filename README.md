@@ -398,6 +398,9 @@ A warning is shown if the number of stored patterns exceeds the theoretical capa
 | `-p, --pattern LIST` | Pattern indices 1..N, comma-separated (e.g., `1,3,5`). In mode 2, uses noisy pattern indices. |
 | `-n, --noise PERCENT` | Noise level 0–100 (mode 1 only) |
 | `-s, --seed VALUE` | Random seed for reproducible runs |
+| `--sweep A:B:S` | Run noise levels from A through B in steps of S |
+| `--trials N` | Repetitions per sweep level (default 10) |
+| `--corruption TYPE` | `flip`, `erase`, `block`, `left`, `right`, `top`, `bottom` |
 | `--compare` | Compare all five rules; defaults to all patterns if `--pattern` is omitted |
 | `-c, --csv FILE` | Write one CSV metrics row per batch simulation (overwrites FILE) |
 | `-q, --quiet` | Suppress non-error output; only exit code indicates result |
@@ -515,7 +518,8 @@ It can be combined with `--output` using separate destination files.
 
 Columns: `rule`, `seed`, `pattern` (1-based), `reference`, `noise_percent`,
 `neurons`, `iterations`, `converged`, `overlap`, `hamming`, `energy`,
-`training_seconds`, `recall_seconds`, `status`, `trial` (1-based). Rule names match the CLI values;
+`training_seconds`, `recall_seconds`, `status`, `trial` (1-based),
+`corruption`, `affected_pixels`. Rule names match the CLI values;
 loaded weights use `loaded` because the binary format does not retain the
 original learning rule. Training time is zero when weights are loaded.
 Times measure process CPU seconds, may round to zero for tiny experiments,
@@ -560,7 +564,8 @@ exact matches, converged recalls, mean iterations, training CPU seconds and
 total recall CPU seconds. `--quiet` suppresses summaries but preserves CSV
 output and errors. CSV rows are ordered by rule, then selection; `status=ok`
 means recall ran (check `converged` separately). Failed rules get an additional
-`status=failed` row with only rule and seed populated. Other rules still run,
+`status=failed` row with rule, seed, noise level, trial and corruption
+metadata; recall metrics remain blank. Other rules still run,
 and any such failure makes the command exit with code 1. For example,
 linearly dependent memories cannot be learned by the pseudo-inverse rule.
 
@@ -601,3 +606,50 @@ repetition. Failed rules retain their noise level/trial in `status=failed`
 rows and cause exit code 1; summaries exclude failed batches. A second
 (noisy) input file, `--noise`, weight load/save and pattern output are
 incompatible with sweeps. Configured noise is replaced by the sweep range.
+
+### Missing pieces and spatial corruption
+
+```bash
+# Can every rule recover a letter from its right half?
+./bin/hopfieldann data/hopf01.dat --compare --pattern 1 \
+  --corruption left --noise 50 --seed 42 --verbose
+
+# A randomly positioned missing rectangle
+./bin/hopfieldann data/hopf01.dat --rule modern --pattern 1 \
+  --corruption block --noise 30 --seed 42 --verbose
+
+# How much of the image can be hidden before recognition fails?
+./bin/hopfieldann data/hopf01.dat --compare --pattern 1,2 \
+  --corruption erase --sweep 0:100:20 --trials 3 --seed 42 \
+  --csv missing-pixels.csv
+```
+
+`--corruption TYPE` works in batch, comparison and sweep modes with clean
+stored patterns. Without it, the original random bit-flip behavior remains.
+
+| Type | Meaning of `--noise` or the sweep percentage |
+|------|---------------------------------------------|
+| `flip` | Invert that percentage of randomly selected pixels |
+| `erase` | Hide that percentage of randomly selected pixels |
+| `block` | Hide a random rectangle of approximately that image area |
+| `left`, `right` | Hide that percentage of columns from the named edge |
+| `top`, `bottom` | Hide that percentage of rows from the named edge |
+
+Hidden pixels are **0**, a neutral initial value, shown as `?`. They are
+neither black nor white evidence. Recall updates them normally; they are not
+fixed or clamped. Final output and quality metrics remain binary and are
+compared with the original clean memory. Complete erasure supplies no
+information about which memory was intended, so successful recovery is not
+guaranteed. Input files still accept only `*` and `.`.
+
+Random flips/erasures affect `floor(neurons * percent / 100)` pixels.
+Edge masks round down to whole rows/columns. Blocks approximate the image's
+aspect ratio, round to whole dimensions and choose a seeded random position;
+the actual area can differ from the requested percentage. CSV records
+`corruption` and `affected_pixels` so this remains visible. For a noisy file
+these fields are `file` and `-1` (unknown); failed rows leave affected pixels
+blank. Comparisons reuse the exact same mask/input for all rules within a
+trial. Edge masks are deterministic at a given percentage; repeated trials
+then vary only stochastic training/recall. `--verbose` shows the input mask; `--corruption` is incompatible with
+a second noisy file or the interactive menu. At 0% nothing is changed;
+at 100% all pixels are flipped or hidden, respectively.

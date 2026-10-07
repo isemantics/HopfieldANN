@@ -215,6 +215,9 @@ bool showPattern(const HopfieldContext *ctx, const double pattern[])
             if (equals(pattern[nR * ctx->nColumns + nC], -1.0)) {
                printf(".");
             }
+            else if (equals(pattern[nR * ctx->nColumns + nC], 0.0)) {
+               printf("?");
+            }
             else {
                fprintf(stderr,
                        "\n\tERROR: pattern value %+f out of range\n\n",
@@ -244,6 +247,10 @@ bool showPatternAndDifference(const HopfieldContext *ctx,
          else {
             if (equals(patternWithNoise[nR * ctx->nColumns + nC], -1.0)) {
                printf(".");
+            }
+            else if (equals(patternWithNoise[nR * ctx->nColumns + nC],
+                            0.0)) {
+               printf("?");
             }
             else {
                fprintf(stderr,
