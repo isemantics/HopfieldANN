@@ -1,0 +1,25 @@
+name: Platform checks
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libgtest-dev python3-tk xvfb
+      - run: cmake -S . -B build && cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - run: xvfb-run -a python3 viewer/test_gui.py bin/hopfieldann
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build native MSVC CLI (no Google Test dependency)
+        run: cmake -S . -B build -DBUILD_TESTING=OFF
+      - run: cmake --build build --config Release --parallel
+      - name: CLI exports, parser and viewer model contracts
+        run: python viewer/test_viewer.py bin/hopfieldann.exe
+      - name: Tk viewer smoke test
+        run: python viewer/test_gui.py bin/hopfieldann.exe

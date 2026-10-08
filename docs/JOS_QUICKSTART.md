@@ -1,5 +1,7 @@
 # Voor Jos: van een beschadigd patroon naar een herinnering
 
+See [Linux, Windows and WSL2 setup](PLATFORMS.md) for platform-specific build and launch commands.
+
 De C-app voert alle simulaties uit. De losse viewer opent de resultaten
 achteraf; hij start geen training en verandert geen bestanden.
 Alle onderstaande commando's voer je uit **vanuit de projectmap**.

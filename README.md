@@ -262,8 +262,9 @@ a large distance indicates convergence to a spurious attractor or the wrong lear
 **Prerequisites:** CMake >= 3.15, a C17-compatible compiler, and a build tool
 (such as Make or Ninja). Tests are enabled by default and additionally require
 a C++17-compatible compiler and Google Test (`libgtest-dev` on Debian/Ubuntu,
-`gtest` on macOS via Homebrew). The CLI currently uses POSIX APIs, including
-`getopt_long`; native MSVC builds require portability work.
+`gtest` on macOS via Homebrew). Linux, WSL2 and native Windows builds
+are supported. See [platform setup and commands](docs/PLATFORMS.md) for
+Windows PowerShell instructions and viewer prerequisites.
 
 On Debian/Ubuntu, install the build and test dependencies with:
 

@@ -24,6 +24,19 @@ make -j
 - Install targets: `hopfieldann` executable and the `data/` directory.
 - If adding a source file, extend `LIB_SOURCE_FILES` in `CMakeLists.txt`.
 
+## Platform support
+
+- Linux/WSL2 and native Windows MSVC use the same C17 CLI and Python/Tk viewer.
+- Keep option parsing standard C (no getopt/POSIX string dependency). Options
+  may follow filenames; support exact long names, `--name=value`, clustered
+  short options and `--`. The two positional slots are the CLI input schema.
+- Windows file collision checks use file handle identity, not `stat` inode
+  fields. Config falls back to USERPROFILE when HOME is unset.
+- All CMake configurations put the application directly in `bin/`.
+- See `docs/PLATFORMS.md`; `.github/workflows/platforms.yml` defines Linux and
+  Windows checks. Windows runs the Python integration and GUI contracts;
+  Bash contracts remain Unix-only.
+
 ## Run
 
 ```bash

@@ -9,14 +9,19 @@
 #include "HopfieldUtil.h"
 
 #include <errno.h>
-#include <getopt.h>
+#include <ctype.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <sys/stat.h>
+#endif
 #include <time.h>
 
 #define MAXFILENAME_SIZE 100
@@ -60,6 +65,8 @@ typedef struct {
    char *loadWeightsFile;
    bool helpRequested;
    bool batchMode;
+   int nFiles;
+   const char *files[2];
    const char *csvFile;
    FILE *csv;
    const char *recordFile;
@@ -99,16 +106,53 @@ typedef struct {
    char *outputFile;
 } ConfigFileSettings;
 
+/* C17 replacements for POSIX string helpers. */
+static int compare_case(const char *a, const char *b)
+{
+   while (*a && tolower((unsigned char)*a) == tolower((unsigned char)*b)) {
+      a++;
+      b++;
+   }
+   return tolower((unsigned char)*a) - tolower((unsigned char)*b);
+}
+
+static char *copy_string(const char *value)
+{
+   size_t size = strlen(value) + 1;
+   char *copy = malloc(size);
+   if (copy) memcpy(copy, value, size);
+   return copy;
+}
+
 /* Detect aliases too, so CSV export cannot truncate an input or another
    requested output. */
 static bool same_file(const char *a, const char *b)
 {
    if (a == NULL || b == NULL)
       return false;
+#ifdef _WIN32
+   if (strcmp(a, b) == 0)
+      return true;
+   HANDLE ha = CreateFileA(a, 0, FILE_SHARE_READ | FILE_SHARE_WRITE |
+                          FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL);
+   HANDLE hb = CreateFileA(b, 0, FILE_SHARE_READ | FILE_SHARE_WRITE |
+                          FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL);
+   BY_HANDLE_FILE_INFORMATION ia, ib;
+   bool same = ha != INVALID_HANDLE_VALUE && hb != INVALID_HANDLE_VALUE &&
+      GetFileInformationByHandle(ha, &ia) &&
+      GetFileInformationByHandle(hb, &ib) &&
+      ia.dwVolumeSerialNumber == ib.dwVolumeSerialNumber &&
+      ia.nFileIndexHigh == ib.nFileIndexHigh &&
+      ia.nFileIndexLow == ib.nFileIndexLow;
+   if (ha != INVALID_HANDLE_VALUE) CloseHandle(ha);
+   if (hb != INVALID_HANDLE_VALUE) CloseHandle(hb);
+   return same;
+#else
    struct stat sa, sb;
    return strcmp(a, b) == 0 ||
           (stat(a, &sa) == 0 && stat(b, &sb) == 0 &&
            sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino);
+#endif
 }
 
 static const char *rule_key(LearningRule rule)
@@ -272,7 +316,14 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       free_batch_config(&cfg);
       return 1;
    }
-   apply_config_to_batch(&config, &cfg);
+   bool applied = apply_config_to_batch(&config, &cfg);
+   free(config.saveWeightsFile);
+   free(config.loadWeightsFile);
+   free(config.outputFile);
+   if (!applied) {
+      free_batch_config(&cfg);
+      return 1;
+   }
 
    if ((cfg.compare || cfg.sweep || cfg.capacity) && (cfg.loadWeightsFile || cfg.saveWeightsFile ||
                        cfg.outputFile)) {
@@ -290,7 +341,7 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       printf("- Random seed: %u\n", cfg.seed);
 
    /* Validate positional arguments */
-   if (argc - optind < 1 || argc - optind > 2) {
+   if (cfg.nFiles < 1 || cfg.nFiles > 2) {
       fprintf(stderr,
               "\n\tUSAGE: hopfieldann <input patterns filename> "
               "[noisy patterns filename] [options]\n\n");
@@ -298,7 +349,7 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       return 1;
    }
 
-   bool mode2 = (argc - optind == 2);
+   bool mode2 = (cfg.nFiles == 2);
 
    if (cfg.corruptionSet && (!cfg.batchMode || mode2)) {
       fprintf(stderr, "Error: --corruption requires batch mode "
@@ -319,8 +370,8 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       return 1;
    }
 
-   const char *patternFile = argv[optind];
-   const char *noisyFile = (argc - optind == 2) ? argv[optind + 1] : NULL;
+   const char *patternFile = cfg.files[0];
+   const char *noisyFile = (cfg.nFiles == 2) ? cfg.files[1] : NULL;
 
    if (same_file(cfg.csvFile, patternFile) ||
        same_file(cfg.csvFile, noisyFile) ||
@@ -449,7 +500,7 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
          }
       }
 
-      if (argc - optind == 2) {
+      if (cfg.nFiles == 2) {
          /* Mode 2: noisy file provided, interactive noisy pattern
           * selection */
          int menu = 0;
@@ -905,7 +956,7 @@ static int *parse_int_list(const char *str, int *count)
    return arr;
 }
 
-/* Parse CLI options using getopt_long. */
+/* Parse exact long names and clustered short options on every platform. */
 static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
 {
    memset(cfg, 0, sizeof(BatchConfig));
@@ -913,30 +964,87 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    cfg->trial = 1;
    cfg->rule = RULE_HEBBIAN;
 
-   static struct option long_options[] = {
-      {"trace-detail", required_argument, 0, 262},
-      {"record", required_argument, 0, 261},
-      {"capacity", no_argument, 0, 260},
-      {"corruption", required_argument, 0, 259},
-      {"sweep", required_argument, 0, 257},
-      {"trials", required_argument, 0, 258},
-      {"compare", no_argument, 0, 256},
-      {"csv", required_argument, 0, 'c'},
-      {"rule", required_argument, 0, 'r'},
-      {"pattern", required_argument, 0, 'p'},
-      {"noise", required_argument, 0, 'n'},
-      {"seed", required_argument, 0, 's'},
-      {"quiet", no_argument, 0, 'q'},
-      {"verbose", no_argument, 0, 'v'},
-      {"help", no_argument, 0, 'h'},
-      {"output", required_argument, 0, 'o'},
-      {"save-weights", required_argument, 0, 'w'},
-      {"load-weights", required_argument, 0, 'l'},
+   static const struct {
+      const char *name;
+      int argument, unused, value;
+   } long_options[] = {
+      {"trace-detail", 1, 0, 262},
+      {"record", 1, 0, 261},
+      {"capacity", 0, 0, 260},
+      {"corruption", 1, 0, 259},
+      {"sweep", 1, 0, 257},
+      {"trials", 1, 0, 258},
+      {"compare", 0, 0, 256},
+      {"csv", 1, 0, 'c'},
+      {"rule", 1, 0, 'r'},
+      {"pattern", 1, 0, 'p'},
+      {"noise", 1, 0, 'n'},
+      {"seed", 1, 0, 's'},
+      {"quiet", 0, 0, 'q'},
+      {"verbose", 0, 0, 'v'},
+      {"help", 0, 0, 'h'},
+      {"output", 1, 0, 'o'},
+      {"save-weights", 1, 0, 'w'},
+      {"load-weights", 1, 0, 'l'},
       {0, 0, 0, 0}};
 
-   int opt;
-   while ((opt = getopt_long(argc, argv, "r:p:n:s:qvho:w:l:c:", long_options,
-                             NULL)) != -1) {
+   bool options = true;
+   const char *shorts = NULL;
+   for (int arg = 1; arg < argc || (shorts && *shorts);) {
+      int opt = '?';
+      const char *optarg = NULL;
+      size_t entry = 0;
+      if (shorts && *shorts) {
+         opt = (unsigned char)*shorts++;
+         while (long_options[entry].name &&
+                long_options[entry].value != opt) entry++;
+      }
+      else {
+         const char *token = argv[arg++];
+         if (options && strcmp(token, "--") == 0) {
+            options = false;
+            continue;
+         }
+         if (!options || token[0] != '-' || !token[1]) {
+            if (cfg->nFiles == 2) {
+               fprintf(stderr, "USAGE: hopfieldann input [noisy] [options]\n");
+               return false;
+            }
+            cfg->files[cfg->nFiles++] = token;
+            continue;
+         }
+         if (token[1] != '-') {
+            shorts = token + 1;
+            continue;
+         }
+         const char *equals = strchr(token + 2, '=');
+         size_t length = equals ? (size_t)(equals - token - 2)
+                                : strlen(token + 2);
+         while (long_options[entry].name &&
+                (strlen(long_options[entry].name) != length ||
+                 strncmp(long_options[entry].name, token + 2, length))) entry++;
+         if (equals) optarg = equals + 1;
+      }
+      if (!long_options[entry].name) {
+         fprintf(stderr, "Error: unknown option\n");
+         return false;
+      }
+      opt = long_options[entry].value;
+      if (long_options[entry].argument) {
+         if (shorts && *shorts) {
+            optarg = shorts;
+            shorts = NULL;
+         }
+         if (!optarg && arg < argc) optarg = argv[arg++];
+         if (!optarg) {
+            fprintf(stderr, "Error: option requires a value\n");
+            return false;
+         }
+      }
+      else if (optarg) {
+         fprintf(stderr, "Error: option does not accept a value\n");
+         return false;
+      }
       switch (opt) {
          case 262:
             if (strcmp(optarg, "neuron") && strcmp(optarg, "sweep")) {
@@ -1010,15 +1118,15 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
             cfg->csvFile = optarg;
             break;
          case 'r': {
-            if (strcasecmp(optarg, "hebbian") == 0)
+            if (compare_case(optarg, "hebbian") == 0)
                cfg->rule = RULE_HEBBIAN;
-            else if (strcasecmp(optarg, "storkey") == 0)
+            else if (compare_case(optarg, "storkey") == 0)
                cfg->rule = RULE_STORKEY;
-            else if (strcasecmp(optarg, "pseudo-inverse") == 0)
+            else if (compare_case(optarg, "pseudo-inverse") == 0)
                cfg->rule = RULE_PSEUDO_INVERSE;
-            else if (strcasecmp(optarg, "daydreaming") == 0)
+            else if (compare_case(optarg, "daydreaming") == 0)
                cfg->rule = RULE_DAYDREAMING;
-            else if (strcasecmp(optarg, "modern") == 0)
+            else if (compare_case(optarg, "modern") == 0)
                cfg->rule = RULE_MODERN;
             else {
                fprintf(stderr, "\n\tERROR: unknown learning rule '%s'\n\n",
@@ -1070,13 +1178,19 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
             cfg->helpRequested = true;
             break;
          case 'o':
-            cfg->outputFile = strdup(optarg);
+            free(cfg->outputFile);
+            cfg->outputFile = copy_string(optarg);
+            if (!cfg->outputFile) return false;
             break;
          case 'w':
-            cfg->saveWeightsFile = strdup(optarg);
+            free(cfg->saveWeightsFile);
+            cfg->saveWeightsFile = copy_string(optarg);
+            if (!cfg->saveWeightsFile) return false;
             break;
          case 'l':
-            cfg->loadWeightsFile = strdup(optarg);
+            free(cfg->loadWeightsFile);
+            cfg->loadWeightsFile = copy_string(optarg);
+            if (!cfg->loadWeightsFile) return false;
             break;
          case '?':
             return false;
@@ -1130,13 +1244,15 @@ static bool read_config_file(ConfigFileSettings *settings)
 
    const char *paths[] = {"./.hopfieldrc", NULL};
    char *home = getenv("HOME");
+#ifdef _WIN32
+   if (!home) home = getenv("USERPROFILE");
+#endif
    char *homePath = NULL;
    if (home) {
       size_t len = strlen(home) + strlen("/.hopfieldrc") + 1;
       homePath = (char *)malloc(len);
-      if (homePath) {
-         snprintf(homePath, len, "%s/.hopfieldrc", home);
-      }
+      if (!homePath) return false;
+      snprintf(homePath, len, "%s/.hopfieldrc", home);
       paths[1] = homePath;
    }
 
@@ -1175,20 +1291,20 @@ static bool read_config_file(ConfigFileSettings *settings)
                                   *val_end == '\n' || *val_end == '\r'))
             *val_end-- = '\0';
 
-         if (strcasecmp(key, "rule") == 0) {
-            if (strcasecmp(val, "hebbian") == 0)
+         if (compare_case(key, "rule") == 0) {
+            if (compare_case(val, "hebbian") == 0)
                settings->rule = RULE_HEBBIAN;
-            else if (strcasecmp(val, "storkey") == 0)
+            else if (compare_case(val, "storkey") == 0)
                settings->rule = RULE_STORKEY;
-            else if (strcasecmp(val, "pseudo-inverse") == 0)
+            else if (compare_case(val, "pseudo-inverse") == 0)
                settings->rule = RULE_PSEUDO_INVERSE;
-            else if (strcasecmp(val, "daydreaming") == 0)
+            else if (compare_case(val, "daydreaming") == 0)
                settings->rule = RULE_DAYDREAMING;
-            else if (strcasecmp(val, "modern") == 0)
+            else if (compare_case(val, "modern") == 0)
                settings->rule = RULE_MODERN;
             settings->ruleSet = true;
          }
-         else if (strcasecmp(key, "seed") == 0) {
+         else if (compare_case(key, "seed") == 0) {
             if (!parse_seed(val, &settings->seed)) {
                fprintf(stderr, "Error: invalid config seed '%s'\n", val);
                fclose(f);
@@ -1197,7 +1313,7 @@ static bool read_config_file(ConfigFileSettings *settings)
             }
             settings->seedSet = true;
          }
-         else if (strcasecmp(key, "noise") == 0) {
+         else if (compare_case(key, "noise") == 0) {
             char *endptr;
             long v = strtol(val, &endptr, 10);
             if (endptr != val && *endptr == '\0' && v >= 0 &&
@@ -1206,19 +1322,37 @@ static bool read_config_file(ConfigFileSettings *settings)
                settings->noiseSet = true;
             }
          }
-         else if (strcasecmp(key, "verbose") == 0) {
+         else if (compare_case(key, "verbose") == 0) {
             settings->verbose =
-               (strcasecmp(val, "true") == 0 ||
-                strcasecmp(val, "1") == 0 || strcasecmp(val, "yes") == 0);
+               (compare_case(val, "true") == 0 ||
+                compare_case(val, "1") == 0 || compare_case(val, "yes") == 0);
          }
-         else if (strcasecmp(key, "save_weights") == 0) {
-            settings->saveWeightsFile = strdup(val);
+         else if (compare_case(key, "save_weights") == 0) {
+            free(settings->saveWeightsFile);
+            settings->saveWeightsFile = copy_string(val);
+            if (!settings->saveWeightsFile) {
+               fclose(f);
+               free(homePath);
+               return false;
+            }
          }
-         else if (strcasecmp(key, "load_weights") == 0) {
-            settings->loadWeightsFile = strdup(val);
+         else if (compare_case(key, "load_weights") == 0) {
+            free(settings->loadWeightsFile);
+            settings->loadWeightsFile = copy_string(val);
+            if (!settings->loadWeightsFile) {
+               fclose(f);
+               free(homePath);
+               return false;
+            }
          }
-         else if (strcasecmp(key, "output") == 0) {
-            settings->outputFile = strdup(val);
+         else if (compare_case(key, "output") == 0) {
+            free(settings->outputFile);
+            settings->outputFile = copy_string(val);
+            if (!settings->outputFile) {
+               fclose(f);
+               free(homePath);
+               return false;
+            }
          }
       }
       fclose(f);
@@ -1247,13 +1381,16 @@ static bool apply_config_to_batch(const ConfigFileSettings *config,
       cfg->verbose = true;
    }
    if (config->saveWeightsFile && !cfg->saveWeightsFile) {
-      cfg->saveWeightsFile = strdup(config->saveWeightsFile);
+      cfg->saveWeightsFile = copy_string(config->saveWeightsFile);
+      if (!cfg->saveWeightsFile) return false;
    }
    if (config->loadWeightsFile && !cfg->loadWeightsFile) {
-      cfg->loadWeightsFile = strdup(config->loadWeightsFile);
+      cfg->loadWeightsFile = copy_string(config->loadWeightsFile);
+      if (!cfg->loadWeightsFile) return false;
    }
    if (config->outputFile && !cfg->outputFile) {
-      cfg->outputFile = strdup(config->outputFile);
+      cfg->outputFile = copy_string(config->outputFile);
+      if (!cfg->outputFile) return false;
    }
    return true;
 }

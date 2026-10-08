@@ -1,5 +1,7 @@
 # Offline Hopfield viewer
 
+See [Linux, Windows and WSL2 setup](../docs/PLATFORMS.md) for platform-specific build and launch commands.
+
 This is a separate, read-only Python/Tkinter application. It opens results;
 it never starts simulations, trains networks, invokes a shell, or writes to
 recordings. The C17 CLI has no Python or Tk dependency.

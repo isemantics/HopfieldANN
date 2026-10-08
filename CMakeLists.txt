@@ -7,6 +7,7 @@ project(HopfieldANN
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 # Library (static) for testing
 set(LIB_SOURCE_FILES
@@ -41,9 +42,13 @@ endif()
 add_executable(hopfieldann src/main.c src/cli.c)
 target_link_libraries(hopfieldann PRIVATE hopfield_lib)
 target_include_directories(hopfieldann PRIVATE src)
+if(MSVC)
+    target_compile_definitions(hopfield_lib PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(hopfieldann PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 
 set_target_properties(hopfieldann PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "$<1:${PROJECT_SOURCE_DIR}/bin>"
 )
 
 install(TARGETS hopfieldann RUNTIME DESTINATION ".")

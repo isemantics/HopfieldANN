@@ -7,7 +7,7 @@ try:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 except ImportError:
-    raise SystemExit("The viewer requires Python 3 with Tkinter (python3-tk on Linux).")
+    raise SystemExit("The viewer requires Python 3 with Tkinter. On Debian/Ubuntu install python3-tk; on Windows install Python with Tcl/Tk support. See docs/PLATFORMS.md.")
 
 from model import load, replay_frame, pixel_differences, graph_data
 

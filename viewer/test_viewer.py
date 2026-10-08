@@ -32,6 +32,23 @@ class ViewerTest(unittest.TestCase):
                      "--record", "run.jsonl", "--csv", "run.csv", "--quiet", *args)
         return load(self.root / "run.jsonl")
 
+    def test_portable_options_and_paths(self):
+        self.run_cli("-qv", "-p1", "--noise=0", "--seed=42",
+                     "--rule=HEBBIAN", "--record", "replay with spaces.jsonl")
+        self.assertTrue(load(self.root / "replay with spaces.jsonl")["runs"])
+        for args in [("--quiet=yes",), ("--unknown",), ("--seed",)]:
+            self.run_cli(*args, code=1)
+        source = self.root / "patterns.dat"
+        before = source.read_bytes()
+        self.run_cli("-p1", "-n0", "--record", "./patterns.dat", code=1)
+        self.assertEqual(source.read_bytes(), before)
+        (self.root / "-patterns.dat").write_bytes(before)
+        result = subprocess.run(
+            [str(BINARY), "-qp1", "-n0", "--", "-patterns.dat"],
+            cwd=self.root, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_replay_and_csv_agree(self):
         data = self.record("--corruption", "left")
         csv = load(self.root / "run.csv")
