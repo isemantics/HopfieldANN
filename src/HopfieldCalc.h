@@ -13,6 +13,15 @@ typedef void (*ConvergenceCallback)(int iteration, double energy,
 extern "C" {
 #endif
 
+/* Called only for changed neurons; sweep and neuron indices are 1-based.
+   Observers must not change network state or consume random numbers. */
+typedef void (*NeuronCallback)(int sweep, int neuron, double value,
+                               void *user_data);
+bool convergePatternTraced(HopfieldContext *ctx, const double input[],
+                           double output[], ConvergenceCallback callback,
+                           NeuronCallback neuronCallback, void *user_data,
+                           double *finalEnergy);
+
 /* Pure functions - no context needed */
 bool isSymmetric(const int patternSize, const double *const w[]);
 bool hasZeroDiagonal(const int patternSize, const double *const w[]);

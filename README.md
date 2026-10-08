@@ -711,3 +711,9 @@ For a capacity graph, use `--capacity --noise 20 --trials 3 --compare
 Recording is opt-in, can produce large files, and adds I/O to measured CPU
 times; it does not alter recall results. Failed/incomplete recordings are
 identified in the viewer. CSV has no rasters or iteration histories.
+
+For finer replay, add `--trace-detail neuron` alongside `--record`.
+Classical recall then records each changed neuron, and the viewer's
+Play/Pause controls animate the reconstruction. Modern Hopfield stays at
+whole-state updates. The default is `--trace-detail sweep`; numerical results
+and the random sequence are unchanged. See the viewer README for details.

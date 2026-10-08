@@ -9,7 +9,7 @@ try:
 except ImportError:
     raise SystemExit("The viewer requires Python 3 with Tkinter (python3-tk on Linux).")
 
-from model import load, recognition_curves
+from model import load, recognition_curves, replay_frame
 
 
 class Viewer:
@@ -17,6 +17,8 @@ class Viewer:
         self.root = root
         self.data = None
         self.run = None
+        self.timer = None
+        root.protocol("WM_DELETE_WINDOW", self.close)
         root.title("Hopfield — experiment viewer")
         root.geometry("1150x820")
         top = ttk.Frame(root, padding=8)
@@ -59,6 +61,8 @@ class Viewer:
         self.position = tk.IntVar(value=0)
         playback = ttk.Frame(right)
         playback.pack(fill="x", pady=5)
+        self.play_button = ttk.Button(playback, text="Play", command=self.toggle_play)
+        self.play_button.pack(side="left")
         ttk.Button(playback, text="◀", command=lambda: self.move(-1)).pack(side="left")
         self.slider = tk.Scale(playback, from_=0, to=0, orient="horizontal", variable=self.position,
                                command=lambda _: self.draw_rasters(), showvalue=False)
@@ -87,7 +91,41 @@ class Viewer:
         ttk.Label(root, text="Black = +1 · white = −1 · amber = unknown (0). Modern energy uses its continuous state; snapshots are thresholded.",
                   padding=(8, 4)).pack(fill="x")
 
+    def pause(self):
+        if self.timer is not None:
+            self.root.after_cancel(self.timer)
+            self.timer = None
+        self.play_button.configure(text="Play")
+
+    def close(self):
+        self.pause()
+        self.root.destroy()
+
+    def toggle_play(self):
+        if self.timer is not None:
+            self.pause()
+            return
+        if not self.run or not self.run["frames"]:
+            return
+        if self.position.get() >= len(self.run["frames"]):
+            self.position.set(0)
+        self.play_button.configure(text="Pause")
+        self.timer = self.root.after(100, self.tick)
+
+    def tick(self):
+        self.timer = None
+        if not self.run:
+            self.pause()
+            return
+        self.position.set(min(self.position.get() + 1, len(self.run["frames"])))
+        self.draw_rasters()
+        if self.position.get() < len(self.run["frames"]):
+            self.timer = self.root.after(100, self.tick)
+        else:
+            self.pause()
+
     def open(self, path=None):
+        self.pause()
         path = path or filedialog.askopenfilename(filetypes=[("Hopfield results", "*.jsonl *.csv"), ("All files", "*")])
         if not path:
             return
@@ -118,9 +156,10 @@ class Viewer:
         selected = self.table.selection()
         if not selected or not self.data:
             return
+        self.pause()
         self.run = self.data["runs"][int(selected[0])]
-        self.slider.configure(to=len(self.run["steps"]))
-        self.position.set(len(self.run["steps"]))
+        self.slider.configure(to=len(self.run["frames"]))
+        self.position.set(len(self.run["frames"]))
         count = min(self.run["stored_patterns"], len(self.data["memories"]))
         self.memory.configure(values=["Reference"] + list(range(1, count + 1)))
         self.memory.set("Reference")
@@ -134,8 +173,9 @@ class Viewer:
         self.draw_graph()
 
     def move(self, delta):
+        self.pause()
         if self.run:
-            self.position.set(max(0, min(len(self.run["steps"]), self.position.get() + delta)))
+            self.position.set(max(0, min(len(self.run["frames"]), self.position.get() + delta)))
             self.draw_rasters()
 
     def draw_rasters(self, event=None):
@@ -144,7 +184,7 @@ class Viewer:
                 canvas.delete("all")
             return
         run = self.run
-        step = min(self.position.get(), len(run["steps"]))
+        step = min(self.position.get(), len(run["frames"]))
         reference = run.get("original")
         label = "Reference (noisy)" if run["reference"] == "noisy" else "Original memory"
         selected = self.memory.get()
@@ -152,7 +192,7 @@ class Viewer:
             reference = self.data["memories"][int(selected) - 1]
             label = f"Learned memory {selected}"
         self.grid_titles[0].configure(text=label)
-        current = run["steps"][step - 1]["pixels"] if step else run.get("input")
+        current = replay_frame(run, step)
         values = [reference, run.get("input"), current]
         for canvas, pixels in zip(self.canvases, values):
             canvas.delete("all")
@@ -171,8 +211,14 @@ class Viewer:
                 canvas.create_rectangle(x, y, x + cell, y + cell, fill=color,
                                         outline="#c4cad3" if cell >= 6 else color)
         self.grid_titles[2].configure(text="Recall" if step else "Initial state")
-        energy = run["steps"][step - 1]["energy"] if step else None
-        self.step_label.configure(text=f"Iteration {step}/{len(run['steps'])}" +
+        frame = run["frames"][step - 1] if step else {}
+        energy = frame.get("energy")
+        detail = f" · sweep {frame['iteration']}" if frame else " · initial input"
+        if "neuron" in frame:
+            detail += f" · neuron {frame['neuron']} changed"
+        elif frame:
+            detail += " complete"
+        self.step_label.configure(text=f"Frame {step}/{len(run['frames'])}" + detail +
                                   (f" · energy {energy:.6g}" if energy is not None else ""))
 
     def draw_graph(self):

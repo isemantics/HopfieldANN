@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory() as directory:
     subprocess.run([str(binary), "patterns.dat", "--capacity", "--compare",
                     "--noise", "25", "--trials", "1", "--seed", "42",
                     "--corruption", "block", "--record", "runs.jsonl",
-                    "--csv", "runs.csv", "--quiet"], cwd=folder, check=True,
+                    "--trace-detail", "neuron", "--csv", "runs.csv", "--quiet"], cwd=folder, check=True,
                    stdin=subprocess.DEVNULL, timeout=30)
     root = tk.Tk()
     errors = []
@@ -33,6 +33,14 @@ with tempfile.TemporaryDirectory() as directory:
             app.position.set(0)
             app.draw_rasters()
             app.move(1)
+            app.toggle_play()
+            assert app.timer is not None
+            app.pause()
+            assert app.timer is None
+            app.position.set(len(app.run["frames"]) - 1)
+            app.tick()
+            assert app.position.get() == len(app.run["frames"])
+            assert app.timer is None
             app.memory.set("1")
             app.draw_rasters()
             for graph in range(3):

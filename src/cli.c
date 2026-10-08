@@ -65,6 +65,8 @@ typedef struct {
    const char *recordFile;
    FILE *record;
    size_t nextRun;
+   bool neuronTrace;
+   bool traceSet;
    double trainingSeconds;
    bool compare;
    bool sweep;
@@ -194,6 +196,16 @@ struct VerboseCallbackData {
    size_t runId;
 };
 
+static void record_neuron(int sweep, int neuron, double value,
+                          void *user_data)
+{
+   struct VerboseCallbackData *data = user_data;
+   fprintf(data->record,
+           "{\"type\":\"change\",\"id\":%zu,\"iteration\":%d,"
+           "\"neuron\":%d,\"value\":%.0f}\n",
+           data->runId, sweep, neuron, value);
+}
+
 static void verbose_iteration_callback(int iteration, double energy,
                                        const double pattern[],
                                        void *user_data)
@@ -235,6 +247,11 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       return 0;
    }
 
+   if (cfg.traceSet && !cfg.recordFile) {
+      fprintf(stderr, "Error: --trace-detail requires --record\n");
+      free_batch_config(&cfg);
+      return 1;
+   }
    if (cfg.compare && cfg.ruleSet) {
       fprintf(stderr, "Error: --compare cannot be combined with --rule\n");
       free_batch_config(&cfg);
@@ -377,7 +394,7 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
          result = 1;
          goto cleanup;
       }
-      recordSession(cfg.record, ctx, cfg.seed);
+      recordSession(cfg.record, ctx, cfg.seed, cfg.neuronTrace);
    }
 
    /* Batch mode or interactive */
@@ -897,6 +914,7 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    cfg->rule = RULE_HEBBIAN;
 
    static struct option long_options[] = {
+      {"trace-detail", required_argument, 0, 262},
       {"record", required_argument, 0, 261},
       {"capacity", no_argument, 0, 260},
       {"corruption", required_argument, 0, 259},
@@ -920,6 +938,14 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    while ((opt = getopt_long(argc, argv, "r:p:n:s:qvho:w:l:c:", long_options,
                              NULL)) != -1) {
       switch (opt) {
+         case 262:
+            if (strcmp(optarg, "neuron") && strcmp(optarg, "sweep")) {
+               fprintf(stderr, "Error: trace detail must be sweep or neuron\n");
+               return false;
+            }
+            cfg->traceSet = true;
+            cfg->neuronTrace = strcmp(optarg, "neuron") == 0;
+            break;
          case 261:
             cfg->recordFile = optarg;
             break;
@@ -1639,16 +1665,18 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
                mode2 ? -1 : noisePercent,
                mode2 ? "file" : noise_key(cfg->corruption), cfg->trial,
                patternIndex + 1, mode2, state->inputPattern,
-               state->inputPatternWithNoise, cfg->trainingSeconds);
+               state->inputPatternWithNoise, cfg->trainingSeconds,
+               cfg->neuronTrace && !ctx->modernHopfield);
    double finalEnergy;
    struct VerboseCallbackData cb_data = {
       ctx, state->inputPattern, 0, cfg->verbose && !cfg->quiet,
       cfg->record, runId};
    clock_t recallStart = clock();
-   *converged = convergePattern(ctx, state->inputPatternWithNoise,
-                                state->outputPattern,
-                                verbose_iteration_callback, &cb_data,
-                                &finalEnergy);
+   *converged = convergePatternTraced(ctx, state->inputPatternWithNoise,
+                                      state->outputPattern,
+                                      verbose_iteration_callback,
+                                      cfg->neuronTrace ? record_neuron : NULL,
+                                      &cb_data, &finalEnergy);
 
    double recallSeconds = (double)(clock() - recallStart) / CLOCKS_PER_SEC;
    if (cb_data.iterations == 0) {
@@ -1765,6 +1793,7 @@ static void print_usage(void)
    printf("  -s, --seed VALUE          Random seed for reproducibility\n");
    printf("      --corruption TYPE     flip [default], erase, block, "
           "left, right, top, bottom\n");
+   printf("      --trace-detail TYPE  sweep [default] or neuron (classical)\n");
    printf("      --record FILE        Save replay data for the offline viewer\n");
    printf("      --capacity           Test growing prefixes of stored memories\n");
    printf("      --sweep A:B:S         Noise range, inclusive bound, step S\n");

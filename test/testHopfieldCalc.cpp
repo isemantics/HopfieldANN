@@ -1298,3 +1298,31 @@ TEST_F(HopfieldCalcTest, RecallAnalysisCategoriesAndRanking)
    copyPattern(4, inverse, ctx->patterns[1]);
    EXPECT_STREQ(analyzeRecall(ctx, inverse, 0, true).kind, "other");
 }
+
+TEST_F(HopfieldCalcTest, NeuronTracePreservesOutputAndRandomSequence)
+{
+   allocate(8, 1);
+   std::fill_n(ctx->patterns[0], 8, 1.0);
+   ASSERT_TRUE(learnHebbian(ctx));
+   double input[] = {1, 1, 1, 1, 1, -1, 0, -1};
+   double baseline[8], traced[8];
+   srand(42);
+   ASSERT_TRUE(convergePattern(ctx, input, baseline, nullptr, nullptr, nullptr));
+   int nextRandom = rand();
+   struct Observer { int changes = 0; int lastSweep = 0; } observer;
+   auto callback = [](int sweep, int neuron, double value, void *opaque) {
+      auto *state = static_cast<Observer *>(opaque);
+      EXPECT_GE(sweep, state->lastSweep);
+      EXPECT_GE(neuron, 1);
+      EXPECT_LE(neuron, 8);
+      EXPECT_DOUBLE_EQ(value, 1.0);
+      state->changes++;
+      state->lastSweep = sweep;
+   };
+   srand(42);
+   ASSERT_TRUE(convergePatternTraced(ctx, input, traced, nullptr,
+                                    callback, &observer, nullptr));
+   EXPECT_EQ(rand(), nextRandom);
+   EXPECT_EQ(observer.changes, 3);
+   EXPECT_EQ(calcHammingDistance(8, baseline, traced), 0);
+}

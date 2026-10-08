@@ -48,7 +48,8 @@ def settings(event):
         "corruption": str(event.get("corruption", "flip")),
         "reference": str(event.get("reference", "stored")),
         "training_seconds": number(event.get("training_seconds"), "training_seconds"),
-        "steps": [], "status": "unfinished",
+        "steps": [], "frames": [], "status": "unfinished",
+        "trace_detail": event.get("trace_detail", "sweep"),
     }
 
 
@@ -68,7 +69,7 @@ def load_record(path):
                 if data["complete"]:
                     raise ValueError("Data after end event")
                 if kind == "session":
-                    if session or event.get("format") != 1:
+                    if session or event.get("format") not in (1, 2):
                         raise ValueError("Duplicate session or unsupported format")
                     data.update(rows=integer(event.get("rows"), "rows", 1),
                                 columns=integer(event.get("columns"), "columns", 1),
@@ -92,13 +93,29 @@ def load_record(path):
                     run.update(id=run_id,
                                original=pixels(event.get("original"), size, True),
                                input=pixels(event.get("input"), size))
+                    if run["trace_detail"] not in ("sweep", "neuron"):
+                        raise ValueError("Unknown trace detail")
+                    run["_state"] = list(run["input"])
+                    run["_changed"] = set()
                     runs[run_id] = run
                     data["runs"].append(run)
-                elif kind in ("step", "result"):
+                elif kind in ("change", "step", "result"):
                     run = runs.get(integer(event.get("id"), "id", 1))
                     if run is None or run["status"] != "unfinished":
                         raise ValueError("Missing run or result already recorded")
-                    if kind == "step":
+                    if kind == "change":
+                        iteration = integer(event.get("iteration"), "iteration", 1)
+                        neuron = integer(event.get("neuron"), "neuron", 1)
+                        value = event.get("value")
+                        if (run["trace_detail"] != "neuron" or run["rule"] == "modern" or
+                            iteration != len(run["steps"]) + 1 or neuron > size or
+                            type(value) not in (int, float) or value not in (-1, 1) or
+                            neuron in run["_changed"] or run["_state"][neuron - 1] == value):
+                            raise ValueError("Invalid neuron change")
+                        run["_state"][neuron - 1] = value
+                        run["_changed"].add(neuron)
+                        run["frames"].append({"iteration": iteration, "neuron": neuron, "value": value})
+                    elif kind == "step":
                         iteration = integer(event.get("iteration"), "iteration", 1)
                         if iteration != len(run["steps"]) + 1:
                             raise ValueError("Out-of-order iteration")
@@ -107,6 +124,12 @@ def load_record(path):
                             "energy": number(event.get("energy"), "energy"),
                             "pixels": pixels(event.get("pixels"), size, True),
                         })
+                        snapshot = run["steps"][-1]
+                        if run["trace_detail"] == "neuron" and snapshot["pixels"] != run["_state"]:
+                            raise ValueError("Neuron changes disagree with sweep snapshot")
+                        run["frames"].append(snapshot)
+                        run["_state"] = list(snapshot["pixels"])
+                        run["_changed"].clear()
                     else:
                         if not isinstance(event.get("converged"), bool):
                             raise ValueError("Invalid convergence flag")
@@ -202,3 +225,20 @@ def recognition_curves(data, axis):
         counts[1] += 1
     return {key: [(x, 100 * n / total) for x, (n, total) in sorted(points.items())]
             for key, points in groups.items()}
+
+
+def replay_frame(run, position):
+    """Reconstruct from the preceding sweep snapshot; no per-change rasters."""
+    frames = run.get("frames", [])
+    if not 0 <= position <= len(frames):
+        raise ValueError("Frame position out of range")
+    start = position
+    while start > 0 and "pixels" not in frames[start - 1]:
+        start -= 1
+    base = frames[start - 1]["pixels"] if start else run.get("input")
+    if base is None:
+        return None
+    result = list(base)
+    for frame in frames[start:position]:
+        result[frame["neuron"] - 1] = frame["value"]
+    return result

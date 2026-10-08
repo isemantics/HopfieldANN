@@ -632,12 +632,13 @@ void calcOutputPattern(const int patternSize, const double *const w[],
    }
 }
 
-void calcOutputPatternAsync(const int patternSize, const double *const w[],
-                            double pattern[])
+static bool update_async(const int patternSize, const double *const w[],
+                         double pattern[], int sweep,
+                         NeuronCallback callback, void *user_data)
 {
    int *order = (int *)malloc((size_t)patternSize * sizeof(int));
    if (order == NULL) {
-      return;
+      return false;
    }
    for (int i = 0; i < patternSize; i++) {
       order[i] = i;
@@ -654,9 +655,20 @@ void calcOutputPatternAsync(const int patternSize, const double *const w[],
       for (int j = 0; j < patternSize; j++) {
          delta += pattern[j] * w[idx][j];
       }
-      pattern[idx] = sign(delta);
+      double next = sign(delta);
+      bool changed = !equals(pattern[idx], next);
+      pattern[idx] = next;
+      if (changed && callback)
+         callback(sweep, idx + 1, next, user_data);
    }
    free(order);
+   return true;
+}
+
+void calcOutputPatternAsync(const int patternSize, const double *const w[],
+                            double pattern[])
+{
+   (void)update_async(patternSize, w, pattern, 0, NULL, NULL);
 }
 
 double calcOverlap(const int patternSize, const double pattern1[],
@@ -695,9 +707,10 @@ double calcEnergy(const int patternSize, const double pattern[],
    return -0.5 * energy;
 }
 
-bool convergePattern(HopfieldContext *ctx, const double inputPattern[],
-                     double outputPattern[], ConvergenceCallback callback,
-                     void *user_data, double *finalEnergy)
+bool convergePatternTraced(HopfieldContext *ctx, const double inputPattern[],
+                           double outputPattern[], ConvergenceCallback callback,
+                           NeuronCallback neuronCallback,
+                           void *user_data, double *finalEnergy)
 {
    if (ctx == NULL || ctx->patternSize <= 0) {
       if (finalEnergy)
@@ -737,8 +750,9 @@ bool convergePattern(HopfieldContext *ctx, const double inputPattern[],
 
    do {
       copyPattern(ctx->patternSize, pattern, previousPattern);
-      calcOutputPatternAsync(ctx->patternSize,
-                             (const double *const *)ctx->W, pattern);
+      if (!update_async(ctx->patternSize, (const double *const *)ctx->W,
+                        pattern, iter + 1, neuronCallback, user_data))
+         break;
       int flips = 0;
       for (int i = 0; i < ctx->patternSize; i++) {
          if (!equals(previousPattern[i], pattern[i])) {
@@ -762,6 +776,14 @@ bool convergePattern(HopfieldContext *ctx, const double inputPattern[],
    if (finalEnergy)
       *finalEnergy = energy;
    return converged;
+}
+
+bool convergePattern(HopfieldContext *ctx, const double inputPattern[],
+                     double outputPattern[], ConvergenceCallback callback,
+                     void *user_data, double *finalEnergy)
+{
+   return convergePatternTraced(ctx, inputPattern, outputPattern, callback,
+                                NULL, user_data, finalEnergy);
 }
 
 bool calcAssociatedPattern(HopfieldContext *ctx,

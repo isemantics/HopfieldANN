@@ -42,7 +42,7 @@ cd build && cmake .. && make -j && ctest --output-on-failure
 
 Four CTest tests (ViewerContract requires Python 3):
 
-1. `HopfieldTest` — Google Test at `test/testHopfieldCalc.cpp`, **67 `TEST_F`
+1. `HopfieldTest` — Google Test at `test/testHopfieldCalc.cpp`, **68 `TEST_F`
    cases** across two suites:
    - `HopfieldCalcTest` — util helpers, learning rules (all five, incl.
      pseudo-inverse rejection of linearly dependent patterns), symmetry/diagonal
@@ -244,3 +244,9 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
   the CLI from its UI. `viewer/model.py` also loads statistics-only CSVs.
   Keep failed/non-converged/unfinished runs distinguishable and never label
   noisy-reference similarity as clean recognition accuracy.
+
+- `--trace-detail neuron` requires `--record` and exports compact changed-
+  neuron deltas (format 2) during classical recall. Sweep detail remains the
+  default (format 1). `convergePatternTraced` adds an observer without changing
+  update order/random consumption; Modern recall ignores that observer.
+  Keep the final unchanged sweep and retain per-sweep energy reporting.

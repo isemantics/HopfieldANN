@@ -23,13 +23,14 @@ static void raster(FILE *file, const double values[], int size)
    fputc(']', file);
 }
 
-void recordSession(FILE *file, const HopfieldContext *ctx, unsigned seed)
+void recordSession(FILE *file, const HopfieldContext *ctx, unsigned seed,
+                   bool neuronTrace)
 {
    if (!file)
       return;
-   fprintf(file, "{\"type\":\"session\",\"format\":1,\"version\":\"%s\","
+   fprintf(file, "{\"type\":\"session\",\"format\":%d,\"version\":\"%s\","
                  "\"seed\":%u,\"rows\":%d,\"columns\":%d,\"memories\":[",
-           VERSION, seed, ctx->nRows, ctx->nColumns);
+           neuronTrace ? 2 : 1, VERSION, seed, ctx->nRows, ctx->nColumns);
    for (int i = 0; i < ctx->nPatterns; i++) {
       if (i)
          fputc(',', file);
@@ -44,16 +45,17 @@ void recordStart(FILE *file, size_t id, const HopfieldContext *ctx,
                  const char *rule, int noise, const char *corruption,
                  int trial, int pattern, bool noisyReference,
                  const double reference[], const double input[],
-                 double trainingSeconds)
+                 double trainingSeconds, bool neuronTrace)
 {
    if (!file)
       return;
    fprintf(file, "{\"type\":\"run\",\"id\":%zu,\"rule\":\"%s\","
                  "\"stored_patterns\":%d,\"noise_percent\":%d,"
                  "\"corruption\":\"%s\",\"trial\":%d,\"pattern\":%d,"
-                 "\"reference\":\"%s\",\"training_seconds\":",
+                 "\"reference\":\"%s\",\"trace_detail\":\"%s\",\"training_seconds\":",
            id, rule, ctx->nPatterns, noise, corruption, trial, pattern,
-           noisyReference ? "noisy" : "stored");
+           noisyReference ? "noisy" : "stored",
+           neuronTrace ? "neuron" : "sweep");
    number(file, trainingSeconds);
    fputs(",\"original\":", file);
    raster(file, reference, ctx->patternSize);

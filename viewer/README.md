@@ -82,3 +82,31 @@ xvfb-run -a python3 viewer/test_gui.py bin/hopfieldann
 
 The model/integration tests are registered as `ViewerContract` in CTest when
 Python 3 is available, and require neither Tkinter nor a graphical display.
+
+## Neuron-by-neuron playback
+
+```bash
+./bin/hopfieldann data/hopf01.dat --rule hebbian --pattern 1 \
+  --noise 30 --seed 42 --record /tmp/neuron-replay.jsonl \
+  --trace-detail neuron
+python3 viewer/viewer.py /tmp/neuron-replay.jsonl
+```
+
+`--trace-detail sweep` is the default. `neuron` records each actual change
+inside a classical asynchronous sweep as a compact delta (1-based sweep and
+neuron index plus new value), including unknown zero pixels becoming binary.
+It requires `--record`. Modern Hopfield continues to record whole-state
+updates, even when neuron detail is requested. No random numbers are consumed
+by the observer, and convergence still requires a complete unchanged sweep.
+
+Use **Play/Pause**, the slider or arrow buttons. Playback runs at 10 frames
+per second; selecting another run or opening a file stops playback. Starting
+Play at the end replays from the beginning. Frame labels distinguish neuron
+changes from completed sweeps. Energy graphs remain per sweep: no artificial
+energy values are interpolated between changes.
+
+Neuron recordings use format version 2; the viewer still reads version 1.
+Each `change` event precedes its sweep's existing `step` snapshot. The reader
+checks that the changes reconstruct that snapshot. Changes are stored as
+compact deltas both on disk and in the viewer; only the visible raster is
+reconstructed. Traces can still grow substantially on long/noisy runs.

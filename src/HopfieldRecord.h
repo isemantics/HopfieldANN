@@ -10,12 +10,13 @@ extern "C" {
 
 /* Streaming JSONL: no trace buffers are retained by the CLI. All calls
    tolerate NULL streams. The owner checks ferror and fclose on completion. */
-void recordSession(FILE *file, const HopfieldContext *ctx, unsigned seed);
+void recordSession(FILE *file, const HopfieldContext *ctx, unsigned seed,
+                   bool neuronTrace);
 void recordStart(FILE *file, size_t id, const HopfieldContext *ctx,
                  const char *rule, int noise, const char *corruption,
                  int trial, int pattern, bool noisyReference,
                  const double reference[], const double input[],
-                 double trainingSeconds);
+                 double trainingSeconds, bool neuronTrace);
 void recordIteration(FILE *file, size_t id, int iteration, double energy,
                      const double pattern[], int size);
 void recordResult(FILE *file, size_t id, const double output[], int size,
