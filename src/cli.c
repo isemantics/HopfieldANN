@@ -2,6 +2,7 @@
 #include "AppInfo.h"
 #include "HopfieldCalc.h"
 #include "HopfieldAnalysis.h"
+#include "HopfieldRecord.h"
 #include "HopfieldContext.h"
 #include "HopfieldIO.h"
 #include "HopfieldNoise.h"
@@ -61,6 +62,9 @@ typedef struct {
    bool batchMode;
    const char *csvFile;
    FILE *csv;
+   const char *recordFile;
+   FILE *record;
+   size_t nextRun;
    double trainingSeconds;
    bool compare;
    bool sweep;
@@ -186,6 +190,8 @@ struct VerboseCallbackData {
    const double *inputPattern;
    int iterations;
    bool verbose;
+   FILE *record;
+   size_t runId;
 };
 
 static void verbose_iteration_callback(int iteration, double energy,
@@ -196,6 +202,8 @@ static void verbose_iteration_callback(int iteration, double energy,
    if (data == NULL)
       return;
    data->iterations = iteration;
+   recordIteration(data->record, data->runId, iteration, energy,
+                   pattern, data->ctx->patternSize);
    if (!data->verbose)
       return;
    showPatternAndDifference(data->ctx, data->inputPattern, pattern);
@@ -311,6 +319,18 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
       printf("- Corruption: %s (? = unknown pixel)\n",
              noise_key(cfg.corruption));
 
+   if (cfg.recordFile && (!cfg.batchMode || cfg.loadWeightsFile ||
+       same_file(cfg.recordFile, patternFile) ||
+       same_file(cfg.recordFile, noisyFile) ||
+       same_file(cfg.recordFile, cfg.csvFile) ||
+       same_file(cfg.recordFile, cfg.outputFile) ||
+       same_file(cfg.recordFile, cfg.saveWeightsFile))) {
+      fprintf(stderr, "Error: --record requires batch training and a "
+                      "separate output file\n");
+      free_batch_config(&cfg);
+      return 1;
+   }
+
    /* Load pattern file */
    if (!cfg.quiet) {
       printf("Hopfield's ANN associative memory: " APPNAME_VERSION
@@ -349,6 +369,16 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
 
    SimState state = {0};
    int result = 0;
+
+   if (cfg.recordFile) {
+      cfg.record = fopen(cfg.recordFile, "w");
+      if (!cfg.record) {
+         fprintf(stderr, "Error: Cannot open recording file\n");
+         result = 1;
+         goto cleanup;
+      }
+      recordSession(cfg.record, ctx, cfg.seed);
+   }
 
    /* Batch mode or interactive */
    if (cfg.capacity) {
@@ -475,6 +505,19 @@ int run_cli(HopfieldContext *ctx, int argc, char *argv[])
    }
 
 cleanup:
+   if (cfg.record) {
+      if (ferror(cfg.record))
+         result = 1;
+      recordEnd(cfg.record, result);
+      bool failed = ferror(cfg.record) != 0;
+      if (fclose(cfg.record) != 0)
+         failed = true;
+      cfg.record = NULL;
+      if (failed) {
+         fprintf(stderr, "Error: Failed to write recording\n");
+         result = 1;
+      }
+   }
    free(state.inputPattern);
    free(state.inputPatternWithNoise);
    free(state.outputPattern);
@@ -854,6 +897,7 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    cfg->rule = RULE_HEBBIAN;
 
    static struct option long_options[] = {
+      {"record", required_argument, 0, 261},
       {"capacity", no_argument, 0, 260},
       {"corruption", required_argument, 0, 259},
       {"sweep", required_argument, 0, 257},
@@ -876,6 +920,9 @@ static bool parse_cli_options(int argc, char *argv[], BatchConfig *cfg)
    while ((opt = getopt_long(argc, argv, "r:p:n:s:qvho:w:l:c:", long_options,
                              NULL)) != -1) {
       switch (opt) {
+         case 261:
+            cfg->recordFile = optarg;
+            break;
          case 260:
             cfg->capacity = true;
             break;
@@ -1268,6 +1315,9 @@ static int run_batch_mode(HopfieldContext *ctx, BatchConfig *cfg,
    else {
       clock_t trainingStart = clock();
       if (!prepare_network(ctx, rule, state, cfg->quiet)) {
+         recordFailure(cfg->record, rule_key(rule), ctx->nPatterns,
+                       mode2 ? -1 : cfg->noise, cfg->trial,
+                       mode2 ? "file" : noise_key(cfg->corruption));
          return 1;
       }
       cfg->trainingSeconds =
@@ -1584,9 +1634,16 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
    }
    int affected = mode2 ? -1 : calcHammingDistance(
       ctx->patternSize, state->inputPattern, state->inputPatternWithNoise);
+   size_t runId = ++cfg->nextRun;
+   recordStart(cfg->record, runId, ctx, rule_key(cfg->rule),
+               mode2 ? -1 : noisePercent,
+               mode2 ? "file" : noise_key(cfg->corruption), cfg->trial,
+               patternIndex + 1, mode2, state->inputPattern,
+               state->inputPatternWithNoise, cfg->trainingSeconds);
    double finalEnergy;
    struct VerboseCallbackData cb_data = {
-      ctx, state->inputPattern, 0, cfg->verbose && !cfg->quiet};
+      ctx, state->inputPattern, 0, cfg->verbose && !cfg->quiet,
+      cfg->record, runId};
    clock_t recallStart = clock();
    *converged = convergePattern(ctx, state->inputPatternWithNoise,
                                 state->outputPattern,
@@ -1605,6 +1662,11 @@ static int run_single_pattern(HopfieldContext *ctx, int selection,
    RecallAnalysis analysis = analyzeRecall(ctx, state->outputPattern,
                                             mode2 ? -1 : patternIndex,
                                             *converged);
+   recordResult(cfg->record, runId, state->outputPattern,
+                ctx->patternSize, *converged, finalEnergy, overlap,
+                hamming, recallSeconds, &analysis);
+   if (cfg->record && ferror(cfg->record))
+      return -1;
    cfg->totalOverlap += overlap;
    cfg->totalHamming += hamming;
    cfg->totalIterations += cb_data.iterations;
@@ -1703,6 +1765,7 @@ static void print_usage(void)
    printf("  -s, --seed VALUE          Random seed for reproducibility\n");
    printf("      --corruption TYPE     flip [default], erase, block, "
           "left, right, top, bottom\n");
+   printf("      --record FILE        Save replay data for the offline viewer\n");
    printf("      --capacity           Test growing prefixes of stored memories\n");
    printf("      --sweep A:B:S         Noise range, inclusive bound, step S\n");
    printf("      --trials N            Repetitions per sweep level [10]\n");

@@ -401,6 +401,8 @@ A warning is shown if the number of stored patterns exceeds the theoretical capa
 | `--sweep A:B:S` | Run noise levels from A through B in steps of S |
 | `--trials N` | Repetitions per sweep level (default 10) |
 | `--corruption TYPE` | `flip`, `erase`, `block`, `left`, `right`, `top`, `bottom` |
+| `--record FILE` | Save rasters, iteration traces and results for the offline viewer |
+| `--capacity` | Test prefixes of 1 through all stored memories |
 | `--compare` | Compare all five rules; defaults to all patterns if `--pattern` is omitted |
 | `-c, --csv FILE` | Write one CSV metrics row per batch simulation (overwrites FILE) |
 | `-q, --quiet` | Suppress non-error output; only exit code indicates result |
@@ -684,3 +686,28 @@ This is an empirical curve for this dataset/order, not a universal capacity
 estimate. Noise stays fixed; `--sweep`, `--pattern`, a noisy input file and
 weight/pattern output options are incompatible. Failed learning at a size
 is recorded; later sizes/rules still run and the final exit code is 1.
+
+### Offline replay viewer
+
+Run an experiment in the CLI and inspect it later in the separate viewer:
+
+```bash
+./bin/hopfieldann data/hopf01.dat --compare --pattern 1,2 \
+  --noise 20 --seed 42 --record /tmp/recall.jsonl
+python3 viewer/viewer.py /tmp/recall.jsonl
+```
+
+The small Python/Tkinter viewer provides a run table, reference/input/recall
+rasters, an iteration slider, learned-memory inspection and energy,
+noise-recognition and capacity graphs. It also opens existing CSV files for
+statistics-only viewing. It never starts or modifies simulations. Python 3
+with Tkinter and a desktop are needed only for the viewer; on Debian/Ubuntu,
+install the optional GUI support with `sudo apt-get install python3-tk`.
+See [viewer instructions and recording format](viewer/README.md).
+
+For a capacity graph, use `--capacity --noise 20 --trials 3 --compare
+--record /tmp/capacity.jsonl`; for a noise graph, use `--sweep 0:60:20
+--trials 3 --compare --record /tmp/noise.jsonl`. Both also accept `--csv`.
+Recording is opt-in, can produce large files, and adds I/O to measured CPU
+times; it does not alter recall results. Failed/incomplete recordings are
+identified in the viewer. CSV has no rasters or iteration histories.

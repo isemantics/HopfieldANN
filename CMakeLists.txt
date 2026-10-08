@@ -13,6 +13,7 @@ set(LIB_SOURCE_FILES
     src/HopfieldContext.c
     src/HopfieldCalc.c
     src/HopfieldAnalysis.c
+    src/HopfieldRecord.c
     src/HopfieldNoise.c
     src/HopfieldIO.c
     src/HopfieldUtil.c
@@ -66,6 +67,15 @@ if(BUILD_TESTING)
 
     add_test(NAME HopfieldTest COMMAND hopfield_test
              WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
+    # The offline viewer model is testable without Tk or a display.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME ViewerContract
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/viewer/test_viewer.py"
+                         $<TARGET_FILE:hopfieldann>)
+    endif()
 
     # CLI contract tests require Bash on Unix.
     if(UNIX)

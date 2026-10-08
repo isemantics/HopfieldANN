@@ -40,9 +40,9 @@ make -j
 cd build && cmake .. && make -j && ctest --output-on-failure
 ```
 
-Three CTest tests:
+Four CTest tests (ViewerContract requires Python 3):
 
-1. `HopfieldTest` — Google Test at `test/testHopfieldCalc.cpp`, **66 `TEST_F`
+1. `HopfieldTest` — Google Test at `test/testHopfieldCalc.cpp`, **67 `TEST_F`
    cases** across two suites:
    - `HopfieldCalcTest` — util helpers, learning rules (all five, incl.
      pseudo-inverse rejection of linearly dependent patterns), symmetry/diagonal
@@ -62,6 +62,10 @@ Three CTest tests:
 3. `ExperimentContract` — `testScripts/experiment_contract_test.sh`
    checks reproducibility, CSV exports, rule comparisons, noise sweeps and
    spatial corruption in an isolated temporary directory.
+
+4. `ViewerContract` — `viewer/test_viewer.py` validates replay exports,
+   CSV agreement, capacity/sweep playback data and invalid-file handling.
+   No GUI is required; `viewer/test_gui.py` is an optional Tk/Xvfb smoke test.
 
 ## Input data format
 
@@ -232,3 +236,11 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
 - `--capacity --noise PERCENT [--compare] --trials N` tests growing memory
   prefixes. Test only currently learned targets, restore ctx->nPatterns
   after the experiment, and report `stored_patterns` in CSV.
+
+- `--record FILE` writes versioned JSONL through `HopfieldRecord` without
+  retaining trace arrays in the CLI. Only batch training is recorded; reject
+  weight loading and file collisions. Preserve random-number consumption.
+- `viewer/viewer.py` is an independent, read-only Tkinter viewer; never run
+  the CLI from its UI. `viewer/model.py` also loads statistics-only CSVs.
+  Keep failed/non-converged/unfinished runs distinguishable and never label
+  noisy-reference similarity as clean recognition accuracy.

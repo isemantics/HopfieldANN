@@ -53,3 +53,7 @@ session-ses_*.md
 # Tool configurations
 .opencode/
 .qodo/
+
+# Python viewer caches
+__pycache__/
+*.pyc
