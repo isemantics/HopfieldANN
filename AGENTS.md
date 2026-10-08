@@ -250,3 +250,8 @@ heap allocation must be NULL-checked and mapped to `HOPFIELD_ERR_OUT_OF_MEMORY`
   default (format 1). `convergePatternTraced` adds an observer without changing
   update order/random consumption; Modern recall ignores that observer.
   Keep the final unchanged sweep and retain per-sweep energy reporting.
+
+- Viewer overlays compare against the currently displayed reference; never
+  overwrite stored metrics when inspecting another memory. Playback speed
+  and looping are offline-only. Recognition graph tests must assert plotted
+  points/series, not merely that a canvas contains an explanatory label.

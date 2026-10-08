@@ -242,3 +242,39 @@ def replay_frame(run, position):
     for frame in frames[start:position]:
         result[frame["neuron"] - 1] = frame["value"]
     return result
+
+
+def pixel_differences(reference, current):
+    """Indices differing from the displayed reference, including unknowns."""
+    if reference is None or current is None:
+        return []
+    if len(reference) != len(current):
+        raise ValueError("Reference and current raster dimensions differ")
+    return [i for i, (expected, actual) in enumerate(zip(reference, current))
+            if expected != actual]
+
+
+def graph_data(data, run, mode):
+    """Return real plot data and an explanation, including sparse datasets."""
+    if mode == 0:
+        points = [(s["iteration"], s["energy"]) for s in (run or {}).get("steps", [])
+                  if s["energy"] is not None]
+        return ({"Selected run": points} if points else {}, "Iteration", "Energy",
+                "Energy measured at completed sweeps." if points else
+                "No energy trace for this run. Open a --record JSONL file; CSV contains final metrics only.")
+    axis = "noise_percent" if mode == 1 else "stored_patterns"
+    other = "stored_patterns" if mode == 1 else "noise_percent"
+    all_curves = recognition_curves(data, axis)
+    if not all_curves:
+        return {}, "Noise (%)" if mode == 1 else "Stored memories", "Exact clean recall (%)", (
+            "No completed clean-target runs. Noisy-file references cannot measure clean recognition.")
+    values = sorted({key[2] for key in all_curves})
+    selected = run.get(other) if run else None
+    fixed = selected if selected in values else values[0]
+    curves = {f"{rule} / {corruption}": points
+              for (rule, corruption, value), points in all_curves.items() if value == fixed}
+    note = f"{'Stored memories' if mode == 1 else 'Noise (%)'} fixed at {fixed}; all rules shown."
+    if len({x for points in curves.values() for x, _ in points}) == 1:
+        note += (" Only one noise level: record --sweep 0:60:10 for a curve." if mode == 1 else
+                 " Only one memory count: record --capacity for a curve.")
+    return curves, "Noise (%)" if mode == 1 else "Stored memories", "Exact clean recall (%)", note

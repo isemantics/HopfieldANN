@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-from model import load, load_record, recognition_curves, replay_frame
+from model import load, load_record, recognition_curves, replay_frame, graph_data, pixel_differences
 
 BINARY = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else None
 
@@ -165,6 +165,42 @@ class ViewerTest(unittest.TestCase):
             load_record(path)
         self.run_cli("--pattern", "1", "--noise", "0", "--trace-detail", "neuron", code=1)
         self.run_cli("--pattern", "1", "--noise", "0", "--record", "x", "--trace-detail", "invalid", code=1)
+
+    def test_graph_modes_and_sparse_data_guidance(self):
+        data = self.record()
+        for mode in range(3):
+            curves, _, _, note = graph_data(data, data["runs"][0], mode)
+            self.assertTrue(curves)
+            self.assertTrue(all(points for points in curves.values()))
+            if mode:
+                self.assertIn("Only one", note)
+        csv = load(self.root / "run.csv")
+        self.assertFalse(graph_data(csv, csv["runs"][0], 0)[0])
+        for mode in (1, 2):
+            self.assertEqual(graph_data(csv, csv["runs"][0], mode)[0],
+                             graph_data(data, data["runs"][0], mode)[0])
+        noisy = copy.deepcopy(data)
+        for run in noisy["runs"]:
+            run["reference"] = "noisy"
+        self.assertFalse(graph_data(noisy, noisy["runs"][0], 1)[0])
+        self.assertIn("Noisy-file", graph_data(noisy, noisy["runs"][0], 1)[3])
+        for option, mode, expected in (("--capacity", 2, [1, 2]),
+                                        ("--sweep", 1, [0, 50, 100])):
+            args = (option, "0:100:50") if option == "--sweep" else (option, "--noise", "0")
+            self.run_cli(*args, "--compare", "--trials", "1", "--seed", "42",
+                         "--quiet", "--record", "graph.jsonl")
+            experiment = load(self.root / "graph.jsonl")
+            curves = graph_data(experiment, experiment["runs"][0], mode)[0]
+            self.assertEqual(len(curves), 5)
+            for points in curves.values():
+                self.assertEqual([x for x, _ in points], expected)
+
+    def test_difference_overlay_indices(self):
+        self.assertEqual(pixel_differences([1, -1, 1], [0, -1, -1]), [0, 2])
+        self.assertEqual(pixel_differences([1, -1], [1, -1]), [])
+        self.assertEqual(pixel_differences(None, [1]), [])
+        with self.assertRaises(ValueError):
+            pixel_differences([1], [1, -1])
 
     def test_recording_does_not_change_results(self):
         self.run_cli("--rule", "daydreaming", "--pattern", "1,2", "--noise", "25",

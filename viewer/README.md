@@ -99,8 +99,8 @@ It requires `--record`. Modern Hopfield continues to record whole-state
 updates, even when neuron detail is requested. No random numbers are consumed
 by the observer, and convergence still requires a complete unchanged sweep.
 
-Use **Play/Pause**, the slider or arrow buttons. Playback runs at 10 frames
-per second; selecting another run or opening a file stops playback. Starting
+Use **Play/Pause**, the slider or arrow buttons. Playback defaults to 10 frames
+per second; choose 1, 5, 10, 25 or 50 fps and enable Loop to repeat; selecting another run or opening a file stops playback. Starting
 Play at the end replays from the beginning. Frame labels distinguish neuron
 changes from completed sweeps. Energy graphs remain per sweep: no artificial
 energy values are interpolated between changes.
@@ -110,3 +110,20 @@ Each `change` event precedes its sweep's existing `step` snapshot. The reader
 checks that the changes reconstruct that snapshot. Changes are stored as
 compact deltas both on disk and in the viewer; only the visible raster is
 reconstructed. Traces can still grow substantially on long/noisy runs.
+
+## Difference overlay and graph guidance
+
+**Show differences (red)** outlines pixels that differ from the currently
+shown reference on both input and recall grids. The live counter includes
+unknown zero pixels. Selecting a different learned memory changes this
+visual comparison, not the run's recorded metrics. For a noisy-file reference,
+these are differences from that noisy image, not clean-target errors.
+
+The graph area has reserved space even in smaller windows; legends are outside
+the plot. Single-x datasets render points and explain how to obtain a full
+curve. Noise plots need multiple levels (`--sweep`); capacity plots need
+multiple stored counts (`--capacity`). CSV supports both recognition graphs,
+but cannot provide an energy trace. Empty plots give a specific explanation.
+
+Follow the [step-by-step quick start for Jos](../docs/JOS_QUICKSTART.md)
+for copyable commands covering animation, spatial corruption and every graph.

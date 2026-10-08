@@ -717,3 +717,12 @@ Classical recall then records each changed neuron, and the viewer's
 Play/Pause controls animate the reconstruction. Modern Hopfield stays at
 whole-state updates. The default is `--trace-detail sweep`; numerical results
 and the random sequence are unchanged. See the viewer README for details.
+
+### Start here: a guided viewer tour
+
+See [Jos's quick start](docs/JOS_QUICKSTART.md) for complete commands to
+build, animate a recovering letter, compare masked patterns, and generate
+noise and capacity curves. The viewer now has a live difference overlay,
+selectable playback speeds and looping. A single ordinary run supplies just
+one noise/capacity point; use `--sweep` or `--capacity` for a full curve.
+Each graph explains missing data rather than leaving an unexplained blank.

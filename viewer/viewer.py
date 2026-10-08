@@ -9,7 +9,7 @@ try:
 except ImportError:
     raise SystemExit("The viewer requires Python 3 with Tkinter (python3-tk on Linux).")
 
-from model import load, recognition_curves, replay_frame
+from model import load, replay_frame, pixel_differences, graph_data
 
 
 class Viewer:
@@ -20,7 +20,8 @@ class Viewer:
         self.timer = None
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.title("Hopfield — experiment viewer")
-        root.geometry("1150x820")
+        root.geometry("1250x880")
+        root.minsize(1050, 760)
         top = ttk.Frame(root, padding=8)
         top.pack(fill="x")
         ttk.Button(top, text="Open recording / CSV", command=self.open).pack(side="left")
@@ -36,7 +37,7 @@ class Viewer:
         self.table = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
         for name in cols:
             self.table.heading(name, text=name.title())
-            self.table.column(name, width=65 if name != "rule" else 105, stretch=True)
+            self.table.column(name, width=55 if name != "rule" else 95, stretch=True)
         scroll = ttk.Scrollbar(left, orient="vertical", command=self.table.yview)
         self.table.configure(yscrollcommand=scroll.set)
         self.table.pack(side="left", fill="both", expand=True)
@@ -44,8 +45,11 @@ class Viewer:
         self.table.bind("<<TreeviewSelect>>", self.select)
         right = ttk.Frame(pane)
         pane.add(right, weight=2)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1, minsize=135)
+        right.rowconfigure(8, weight=2, minsize=150)
         grids = ttk.Frame(right)
-        grids.pack(fill="both", expand=True)
+        grids.grid(row=0, column=0, sticky="nsew")
         self.canvases = []
         self.grid_titles = []
         for title in ("Reference", "Corrupted input", "Recall"):
@@ -53,14 +57,14 @@ class Viewer:
             frame.pack(side="left", fill="both", expand=True)
             label = ttk.Label(frame, text=title, anchor="center")
             label.pack(fill="x")
-            canvas = tk.Canvas(frame, width=190, height=220, bg="#f4f5f7", highlightthickness=0)
+            canvas = tk.Canvas(frame, width=160, height=180, bg="#f4f5f7", highlightthickness=0)
             canvas.pack(fill="both", expand=True)
             canvas.bind("<Configure>", lambda event: self.draw_rasters())
             self.grid_titles.append(label)
             self.canvases.append(canvas)
         self.position = tk.IntVar(value=0)
         playback = ttk.Frame(right)
-        playback.pack(fill="x", pady=5)
+        playback.grid(row=1, column=0, sticky="ew", pady=3)
         self.play_button = ttk.Button(playback, text="Play", command=self.toggle_play)
         self.play_button.pack(side="left")
         ttk.Button(playback, text="◀", command=lambda: self.move(-1)).pack(side="left")
@@ -69,27 +73,55 @@ class Viewer:
         self.slider.pack(side="left", fill="x", expand=True)
         ttk.Button(playback, text="▶", command=lambda: self.move(1)).pack(side="left")
         self.step_label = ttk.Label(right, anchor="center")
-        self.step_label.pack(fill="x")
+        self.step_label.grid(row=2, column=0, sticky="ew")
         self.info = ttk.Label(right, wraplength=650, padding=6)
-        self.info.pack(fill="x")
+        self.info.grid(row=3, column=0, sticky="ew")
         memory_bar = ttk.Frame(right)
-        memory_bar.pack(fill="x", pady=4)
+        memory_bar.grid(row=4, column=0, sticky="ew", pady=3)
         ttk.Label(memory_bar, text="Inspect learned memory:").pack(side="left")
         self.memory = ttk.Combobox(memory_bar, state="readonly", width=8)
         self.memory.pack(side="left", padx=5)
         self.memory.bind("<<ComboboxSelected>>", self.draw_rasters)
+        extras = ttk.Frame(right)
+        extras.grid(row=5, column=0, sticky="ew", pady=3)
+        self.show_differences = tk.BooleanVar(value=False)
+        ttk.Checkbutton(extras, text="Show differences (red)",
+                        variable=self.show_differences,
+                        command=self.draw_rasters).pack(side="left")
+        ttk.Label(extras, text="Playback:").pack(side="left", padx=(12, 3))
+        self.speed = ttk.Combobox(extras, state="readonly", width=9,
+                                  values=("1 fps", "5 fps", "10 fps", "25 fps", "50 fps"))
+        self.speed.set("10 fps")
+        self.speed.pack(side="left")
+        self.speed.bind("<<ComboboxSelected>>", self.change_speed)
+        self.loop = tk.BooleanVar(value=False)
+        ttk.Checkbutton(extras, text="Loop", variable=self.loop).pack(side="left", padx=5)
         controls = ttk.Frame(right)
-        controls.pack(fill="x")
+        controls.grid(row=6, column=0, sticky="ew")
         self.graph_mode = ttk.Combobox(controls, state="readonly",
                                       values=("Energy / iteration", "Recognition / noise", "Recognition / stored memories"))
         self.graph_mode.current(0)
         self.graph_mode.pack(side="left", fill="x", expand=True)
         self.graph_mode.bind("<<ComboboxSelected>>", lambda event: self.draw_graph())
-        self.graph = tk.Canvas(right, width=650, height=260, bg="white", highlightthickness=0)
-        self.graph.pack(fill="both", expand=True, pady=5)
+        self.graph_note = ttk.Label(right, wraplength=570, padding=(0, 3))
+        self.graph_note.grid(row=7, column=0, sticky="ew")
+        self.legend = ttk.Frame(right)
+        self.legend.columnconfigure(0, weight=1)
+        self.legend.columnconfigure(1, weight=1)
+        self.legend.grid(row=9, column=0, sticky="ew")
+        self.graph = tk.Canvas(right, width=550, height=240, bg="white", highlightthickness=0)
+        self.graph.grid(row=8, column=0, sticky="nsew", pady=3)
         self.graph.bind("<Configure>", lambda event: self.draw_graph())
         ttk.Label(root, text="Black = +1 · white = −1 · amber = unknown (0). Modern energy uses its continuous state; snapshots are thresholded.",
                   padding=(8, 4)).pack(fill="x")
+
+    def playback_delay(self):
+        return max(1, round(1000 / int(self.speed.get().split()[0])))
+
+    def change_speed(self, event=None):
+        if self.timer is not None:
+            self.root.after_cancel(self.timer)
+            self.timer = self.root.after(self.playback_delay(), self.tick)
 
     def pause(self):
         if self.timer is not None:
@@ -110,17 +142,20 @@ class Viewer:
         if self.position.get() >= len(self.run["frames"]):
             self.position.set(0)
         self.play_button.configure(text="Pause")
-        self.timer = self.root.after(100, self.tick)
+        self.timer = self.root.after(self.playback_delay(), self.tick)
 
     def tick(self):
         self.timer = None
         if not self.run:
             self.pause()
             return
-        self.position.set(min(self.position.get() + 1, len(self.run["frames"])))
+        if self.loop.get() and self.position.get() >= len(self.run["frames"]):
+            self.position.set(0)
+        else:
+            self.position.set(min(self.position.get() + 1, len(self.run["frames"])))
         self.draw_rasters()
-        if self.position.get() < len(self.run["frames"]):
-            self.timer = self.root.after(100, self.tick)
+        if self.position.get() < len(self.run["frames"]) or self.loop.get():
+            self.timer = self.root.after(self.playback_delay(), self.tick)
         else:
             self.pause()
 
@@ -194,7 +229,8 @@ class Viewer:
         self.grid_titles[0].configure(text=label)
         current = replay_frame(run, step)
         values = [reference, run.get("input"), current]
-        for canvas, pixels in zip(self.canvases, values):
+        mismatches = pixel_differences(reference, current)
+        for panel, (canvas, pixels) in enumerate(zip(self.canvases, values)):
             canvas.delete("all")
             if pixels is None:
                 canvas.create_text(95, 80, text="No raster data", fill="#657080")
@@ -210,6 +246,10 @@ class Viewer:
                 color = "#172338" if value == 1 else "#ffffff" if value == -1 else "#efb74c"
                 canvas.create_rectangle(x, y, x + cell, y + cell, fill=color,
                                         outline="#c4cad3" if cell >= 6 else color)
+                if (panel > 0 and self.show_differences.get() and reference is not None
+                        and value != reference[i]):
+                    canvas.create_rectangle(x + 1, y + 1, x + cell - 1, y + cell - 1,
+                                            outline="#dc2626", width=2, tags="difference")
         self.grid_titles[2].configure(text="Recall" if step else "Initial state")
         frame = run["frames"][step - 1] if step else {}
         energy = frame.get("energy")
@@ -218,6 +258,8 @@ class Viewer:
             detail += f" · neuron {frame['neuron']} changed"
         elif frame:
             detail += " complete"
+        if current is not None and reference is not None:
+            detail += f" · {len(mismatches)}/{len(current)} differ from shown reference"
         self.step_label.configure(text=f"Frame {step}/{len(run['frames'])}" + detail +
                                   (f" · energy {energy:.6g}" if energy is not None else ""))
 
@@ -227,24 +269,18 @@ class Viewer:
         if not self.data:
             return
         mode = self.graph_mode.current()
-        if mode == 0:
-            points = [(s["iteration"], s["energy"]) for s in (self.run or {}).get("steps", []) if s["energy"] is not None]
-            curves = {"Selected run": points} if points else {}
-            xlabel, ylabel = "Iteration", "Energy"
-        else:
-            axis = "noise_percent" if mode == 1 else "stored_patterns"
-            curves = {f"{rule} / {corruption} / {'stored' if mode == 1 else 'noise'}={other}": points
-                      for (rule, corruption, other), points in recognition_curves(self.data, axis).items()
-                      if not self.run or other == self.run["stored_patterns" if mode == 1 else "noise_percent"]}
-            xlabel, ylabel = ("Noise (%)" if mode == 1 else "Stored memories"), "Exact clean recall (%)"
+        curves, xlabel, ylabel, note = graph_data(self.data, self.run, mode)
+        self.graph_note.configure(text=note)
+        for child in self.legend.winfo_children():
+            child.destroy()
         if not curves:
-            canvas.create_text(20, 35, anchor="w", text="No data for this graph (CSV has no iteration traces).")
+            canvas.create_text(20, 35, anchor="nw", width=max(100, canvas.winfo_width() - 40),
+                               text=note, tags="empty")
             return
         width, height = canvas.winfo_width(), canvas.winfo_height()
         if width < 120 or height < 100:
             return
-        legend_height = 15 * len(curves)
-        left, top, right, bottom = 65, 25, width - 15, max(65, height - 45 - legend_height)
+        left, top, right, bottom = 65, 25, width - 15, height - 45
         all_points = [point for series in curves.values() for point in series]
         xmin, xmax = min(x for x, _ in all_points), max(x for x, _ in all_points)
         ymin, ymax = (0, 100) if mode else (min(y for _, y in all_points), max(y for _, y in all_points))
@@ -267,11 +303,13 @@ class Viewer:
             color = colors[i % len(colors)]
             coords = [coordinate for x, y in series for coordinate in point(x, y)]
             if len(coords) >= 4:
-                canvas.create_line(*coords, fill=color, width=2)
+                canvas.create_line(*coords, fill=color, width=2, tags="series")
             for x, y in series:
                 px, py = point(x, y)
-                canvas.create_oval(px - 3, py - 3, px + 3, py + 3, fill=color, outline=color)
-            canvas.create_text(left, bottom + 45 + 15 * i, anchor="w", text=label, fill=color)
+                canvas.create_oval(px - 3, py - 3, px + 3, py + 3, fill=color, outline=color, tags="point")
+            ttk.Label(self.legend, text="● " + label, foreground=color,
+                      wraplength=260).grid(row=i // 2, column=i % 2,
+                                           sticky="w", padx=3)
 
 
 def main():
