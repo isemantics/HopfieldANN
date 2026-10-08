@@ -57,3 +57,5 @@ session-ses_*.md
 # Python viewer caches
 __pycache__/
 *.pyc
+
+*.swp
